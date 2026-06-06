@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: ConvexDecomp
+message: Please cite this repository together with the associated paper.
+type: software
+license: CC-BY-4.0
+authors:
+  - family-names: Dalach
+    given-names: Agata
+abstract: Workflow-oriented convex decomposition of heterogeneous 2D building geometry with shared search infrastructure and dataset-specific adapters for ResPlan and OpenStreetMap.
+preferred-citation:
+  type: generic
+  title: Workflow-Oriented Convex Decomposition of 2D Building Geometry
+  authors:
+    - family-names: Dalach
+      given-names: Agata
+    - family-names: Chen
+      given-names: Xia
+    - family-names: Borrmann
+      given-names: André
+  year: 2026
+  notes: Proc. of the 33rd International Workshop on Intelligent Computing in Engineering
+  url: https://mediatum.ub.tum.de/node?id=1855368

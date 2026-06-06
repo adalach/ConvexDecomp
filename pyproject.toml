@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "convexdecomp"
+version = "0.1.0"
+description = "Workflow-oriented convex decomposition of heterogeneous 2D building geometry."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "geopandas",
+  "ipython",
+  "ipympl",
+  "jupyter",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "shapely",
+]
+
+[tool.setuptools]
+packages = [
+  "convexdecomp",
+  "convexdecomp.core",
+  "convexdecomp.diagnostics",
+  "convexdecomp.geometry",
+  "convexdecomp.io",
+  "convexdecomp.plotting",
+  "convexdecomp.osm",
+  "convexdecomp.resplan",
+]
+
+[tool.setuptools.package-dir]
+convexdecomp = "src/convexdecomp"
+"convexdecomp.core" = "src/convexdecomp/core"
+"convexdecomp.diagnostics" = "src/convexdecomp/diagnostics"
+"convexdecomp.geometry" = "src/convexdecomp/geometry"
+"convexdecomp.io" = "src/convexdecomp/io"
+"convexdecomp.plotting" = "src/convexdecomp/plotting"
+"convexdecomp.osm" = "src/convexdecomp/osm"
+"convexdecomp.resplan" = "src/convexdecomp/resplan"

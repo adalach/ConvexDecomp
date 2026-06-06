@@ -4,3 +4,11 @@ __pycache__/
 .venv/
 output/
 *.pyc
+*.egg-info/
+data/osm/*.pkl
+data/osm/local_exports/
+data/resplan/*.pickle
+external/resplan/
+notebooks/*.pdf
+notebooks/*.png
+notebooks/*.svg

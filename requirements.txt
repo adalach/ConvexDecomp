@@ -1,9 +1,8 @@
 geopandas
 ipython
+ipympl
 jupyter
 matplotlib
-networkx
 numpy
-opencv-python
 pandas
 shapely
