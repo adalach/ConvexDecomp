@@ -54,7 +54,7 @@ The OSM case-study input is included directly. The ResPlan raw dataset is fetche
 
 - `notebooks/ResPlan_1_Preprocessing.ipynb` clones `https://github.com/m-agour/ResPlan.git` into `external/resplan/` only when that local archive source is missing, then extracts `ResPlan.zip` into `external/resplan/ResPlan.pkl`.
 - The OSM notebook pipeline reads the bundled GeoPackage `data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`, which is an anonymized reduced derivative of OpenStreetMap contributors data rather than an original dataset created in this repository.
-- Derived notebook outputs are written under `data/resplan/` and `data/osm/`. For the bundled OSM case study, the preprocessing notebook matches the paper by exporting the still non-convex cleaned footprints with 6 to 32 exterior vertices as the downstream decomposition working set.
+- Derived notebook outputs are written under `data/resplan/` and `data/osm/`. For the bundled OSM case study, the preprocessing notebook matches the paper by exporting the still non-convex cleaned footprints with 6 to 32 exterior vertices as the downstream decomposition working set, while rendering the matched original-vs-final working-set comparison through the dedicated plotting module `src/convexdecomp/plotting/osm_working_set.py`.
 
 See `data/README.md` for the expected local layout.
 
