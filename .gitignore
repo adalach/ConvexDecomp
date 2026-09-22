@@ -3,11 +3,14 @@ __pycache__/
 .DS_Store
 .venv/
 output/
+tmp/
 *.pyc
 *.egg-info/
 data/osm/*.pkl
+data/osm/osm_zones.gpkg
 data/osm/local_exports/
 data/resplan/*.pickle
+data/resplan/*.gpkg
 external/resplan/
 notebooks/*.pdf
 notebooks/*.png

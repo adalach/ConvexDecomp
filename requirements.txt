@@ -4,5 +4,7 @@ ipympl
 jupyter
 matplotlib
 numpy
+openpyxl
 pandas
 shapely
+xlsxwriter

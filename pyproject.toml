@@ -15,8 +15,10 @@ dependencies = [
   "jupyter",
   "matplotlib",
   "numpy",
+  "openpyxl",
   "pandas",
   "shapely",
+  "xlsxwriter",
 ]
 
 [tool.setuptools]
@@ -29,6 +31,7 @@ packages = [
   "convexdecomp.plotting",
   "convexdecomp.osm",
   "convexdecomp.resplan",
+  "convexdecomp.zones",
 ]
 
 [tool.setuptools.package-dir]
@@ -40,3 +43,4 @@ convexdecomp = "src/convexdecomp"
 "convexdecomp.plotting" = "src/convexdecomp/plotting"
 "convexdecomp.osm" = "src/convexdecomp/osm"
 "convexdecomp.resplan" = "src/convexdecomp/resplan"
+"convexdecomp.zones" = "src/convexdecomp/zones"

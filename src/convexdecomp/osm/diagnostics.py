@@ -83,13 +83,23 @@ def count_exterior_direction_groups(geom, angle_tol_deg: float = 1.0) -> int:
     return len(groups)
 
 
-def collect_building_polygons(row: pd.Series) -> list[Polygon]:
+def collect_building_polygon_entries(row: pd.Series) -> list[tuple[Polygon, str]]:
+    """Return the decomposition input polygons of one building with their zone role.
+
+    The role records which preparation stage produced the polygon, so downstream
+    consumers can tell a deliberate perimeter/interior zoning cut apart from a
+    convex-decomposition cut.
+    """
     if bool(row.get("perimeter_defined", False)):
-        polys: list[Polygon] = []
-        polys.extend(extract_polygons(row.get("perimeter_parts")))
-        polys.extend(extract_polygons(row.get("interior_geom")))
-        return polys
-    return extract_polygons(row.get("geometry"))
+        entries: list[tuple[Polygon, str]] = []
+        entries.extend((poly, "perimeter_part") for poly in extract_polygons(row.get("perimeter_parts")))
+        entries.extend((poly, "interior") for poly in extract_polygons(row.get("interior_geom")))
+        return entries
+    return [(poly, "footprint") for poly in extract_polygons(row.get("geometry"))]
+
+
+def collect_building_polygons(row: pd.Series) -> list[Polygon]:
+    return [poly for poly, _ in collect_building_polygon_entries(row)]
 
 
 def count_polygon_vertices(polygons: list[Polygon]) -> int:
@@ -114,6 +124,29 @@ def group_seed_parts(parts_gdf: gpd.GeoDataFrame, *, id_col: str = "sample_id") 
     return grouped
 
 
+def collect_decomposition_polygon_entries(
+    row: pd.Series,
+    *,
+    use_trapezoid_triangle_precheck: bool,
+    trapezoid_seed_map: dict[str, list[Polygon]] | None = None,
+    corner_seed_map: dict[str, list[Polygon]] | None = None,
+    remainder_seed_map: dict[str, list[Polygon]] | None = None,
+) -> list[tuple[Polygon, str]]:
+    if not use_trapezoid_triangle_precheck:
+        return collect_building_polygon_entries(row)
+
+    if bool(row.get("perimeter_defined", False)):
+        sample_id = row["sample_id"]
+        entries: list[tuple[Polygon, str]] = []
+        entries.extend((poly, "perimeter_trapezoid") for poly in (trapezoid_seed_map or {}).get(sample_id, []))
+        entries.extend((poly, "perimeter_corner") for poly in (corner_seed_map or {}).get(sample_id, []))
+        entries.extend((poly, "perimeter_remainder") for poly in (remainder_seed_map or {}).get(sample_id, []))
+        entries.extend((poly, "interior") for poly in extract_polygons(row.get("interior_geom")))
+        return entries
+
+    return [(poly, "footprint") for poly in extract_polygons(row.get("geometry"))]
+
+
 def collect_decomposition_polygons(
     row: pd.Series,
     *,
@@ -122,19 +155,16 @@ def collect_decomposition_polygons(
     corner_seed_map: dict[str, list[Polygon]] | None = None,
     remainder_seed_map: dict[str, list[Polygon]] | None = None,
 ) -> list[Polygon]:
-    if not use_trapezoid_triangle_precheck:
-        return collect_building_polygons(row)
-
-    if bool(row.get("perimeter_defined", False)):
-        sample_id = row["sample_id"]
-        polygons: list[Polygon] = []
-        polygons.extend((trapezoid_seed_map or {}).get(sample_id, []))
-        polygons.extend((corner_seed_map or {}).get(sample_id, []))
-        polygons.extend((remainder_seed_map or {}).get(sample_id, []))
-        polygons.extend(extract_polygons(row.get("interior_geom")))
-        return polygons
-
-    return extract_polygons(row.get("geometry"))
+    return [
+        poly
+        for poly, _ in collect_decomposition_polygon_entries(
+            row,
+            use_trapezoid_triangle_precheck=use_trapezoid_triangle_precheck,
+            trapezoid_seed_map=trapezoid_seed_map,
+            corner_seed_map=corner_seed_map,
+            remainder_seed_map=remainder_seed_map,
+        )
+    ]
 
 
 def prepare_decomposition_inputs(
@@ -163,14 +193,16 @@ def prepare_decomposition_inputs(
         corner_seed_map = {}
         remainder_seed_map = {}
 
-    buildings_convex_gdf["decomp_polygons"] = buildings_convex_gdf.apply(
-        collect_decomposition_polygons,
+    decomp_entries = buildings_convex_gdf.apply(
+        collect_decomposition_polygon_entries,
         axis=1,
         use_trapezoid_triangle_precheck=use_trapezoid_triangle_precheck,
         trapezoid_seed_map=trapezoid_seed_map,
         corner_seed_map=corner_seed_map,
         remainder_seed_map=remainder_seed_map,
     )
+    buildings_convex_gdf["decomp_polygons"] = decomp_entries.apply(lambda entries: [poly for poly, _ in entries])
+    buildings_convex_gdf["decomp_polygon_roles"] = decomp_entries.apply(lambda entries: [role for _, role in entries])
     buildings_convex_gdf["n_polygons"] = buildings_convex_gdf["decomp_polygons"].apply(len)
     buildings_convex_gdf["n_vertices"] = buildings_convex_gdf["decomp_polygons"].apply(count_polygon_vertices)
     return buildings_convex_gdf, trapezoid_seed_gdf, corner_seed_gdf, remainder_seed_gdf
@@ -401,6 +433,8 @@ def run_building_decomposition(
         n_failed_polygons = 0
         n_small_zone_polygons = 0
 
+        polygon_roles = row.get("decomp_polygon_roles") or []
+
         for polygon_idx, polygon in enumerate(polygons, start=1):
             stats = decompose_polygon_with_stats(polygon, cfg)
             convex_variants_total += int(stats["n_variants"])
@@ -423,6 +457,7 @@ def run_building_decomposition(
                     "sample_id": row["sample_id"],
                     "polygon_idx": polygon_idx,
                     "zone_id": f"{row['sample_id']}_poly_{polygon_idx:02d}",
+                    "zone_role": polygon_roles[polygon_idx - 1] if polygon_idx - 1 < len(polygon_roles) else None,
                     "fully_convex_best": bool(stats["fully_convex_best"]),
                     "has_small_zone": bool(stats["has_small_zone"]),
                     "n_variants": int(stats["n_variants"]),
@@ -443,6 +478,7 @@ def run_building_decomposition(
                     "geometry": polygon,
                     "building_geometry": row["geometry"],
                     "best_variant_geom": build_parts_geometry(stats["best_variant"]),
+                    "best_variant_parts": list(stats["best_variant"]),
                 }
             )
 

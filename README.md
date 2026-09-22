@@ -80,7 +80,8 @@ ConvexDecomp/
     ├── io/
     ├── osm/
     ├── plotting/
-    └── resplan/
+    ├── resplan/
+    └── zones/
 ```
 
 ## Structure
@@ -88,8 +89,48 @@ ConvexDecomp/
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
 - `src/convexdecomp/resplan/`: ResPlan preprocessing, room operations, and decomposition helpers.
 - `src/convexdecomp/osm/`: OSM normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
+- `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
 - `external/resplan/`: created locally on first ResPlan run as a dataset source clone; not shipped in the public repo zip.
+
+## Zone Provenance And Artificial Splits
+
+Convex decomposition splits a space that is not split in reality. The convex parts alone cannot say which of them used to be one physical space, nor which of their walls exist only because of the split. Both decomposition notebooks therefore write a second, portable artifact next to their usual output:
+
+- `data/resplan/floorplans_zones.gpkg`
+- `data/osm/osm_zones.gpkg`
+
+Each GeoPackage holds two layers.
+
+`zones` has one row per convex part and carries the provenance chain `container -> space -> zone -> part`:
+
+| column | meaning |
+| --- | --- |
+| `container_id` | enclosing entity: one floorplan, one building, or one district tile |
+| `space_id` | one physical space instance; two bedrooms in one plan get two different values |
+| `zone_id` | the polygon that was handed to the decomposer |
+| `part_id` | one convex output part |
+| `zone_role` | which preparation stage produced the zone, e.g. `room`, `interior`, `perimeter_trapezoid` |
+| `space_part_count`, `space_is_split` | how many parts the space was split into, and whether it was split at all |
+
+`interfaces` has one row per boundary sub-segment of one part, which is one row per prospective wall face. A shared wall appears twice, once from each side, with the same `interface_key`. The `boundary_kind` column is the point of the whole artifact:
+
+| kind | meaning |
+| --- | --- |
+| `exterior` | on the boundary of the decomposed source zone |
+| `artificial_split` | a convex-decomposition cut inside one source zone; no wall exists here in reality |
+| `zoning_split` | a deliberate zoning cut between zones of one space, e.g. perimeter against interior |
+| `space_boundary` | a real boundary between two different spaces |
+| `container_boundary` | a boundary between two different containers, e.g. a party wall between buildings |
+| `unmatched` | no neighbour found and not on the source boundary, so the parts do not tile their zone exactly |
+
+`is_virtual` marks `artificial_split` and `zoning_split` together. `same_space_group` marks segments whose two sides belong to one physical space.
+
+This is deliberately dataset-independent. `convexdecomp.zones.adapters.build_part_records` accepts any list of decomposed source zones, so a district-scale pipeline gets the same grouping and the same wall classification per building without touching the case-study adapters.
+
+The repository builds no building-energy models and depends on no simulation library. The metadata is what a downstream tool needs to build one: parts sharing a `space_id` can be assigned to a single thermal zone, and faces whose `boundary_kind` is `artificial_split` are the ones that should become virtual partitions rather than opaque walls.
+
+Segments reported as `unmatched` are worth checking rather than ignoring. The decomposition is not guaranteed to produce a perfect planar tiling, so the classifier reports a segment it could not pair instead of silently calling it an outer wall. Both notebooks print the count and the share of boundary length affected.
 
 ## Citation And License
 

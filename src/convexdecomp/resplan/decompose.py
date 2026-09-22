@@ -529,6 +529,7 @@ def pick_best_convex_variant_per_room(
                         "time_seconds": 0.0,
                         "failure_counts": {},
                         "geometry": poly,
+                        "output_parts": [poly],
                     }
                 )
                 continue
@@ -572,6 +573,7 @@ def pick_best_convex_variant_per_room(
                         "time_seconds": elapsed if cfg.track_time else None,
                         "failure_counts": search["failure_counts"],
                         "geometry": poly,
+                        "output_parts": [poly],
                     }
                 )
                 continue
@@ -622,6 +624,7 @@ def pick_best_convex_variant_per_room(
                     "time_seconds": elapsed if cfg.track_time else None,
                     "failure_counts": {},
                     "geometry": poly,
+                    "output_parts": list(chosen_variant),
                 }
             )
 

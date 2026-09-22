@@ -22,8 +22,11 @@ Derived notebook outputs:
 
 - `data/resplan/floorplans_aligned_quantized.pickle` from `notebooks/ResPlan_1_Preprocessing.ipynb`
 - `data/resplan/floorplans.pickle` from `notebooks/ResPlan_2_Decomposition.ipynb`
+- `data/resplan/floorplans_zones.gpkg` from `notebooks/ResPlan_2_Decomposition.ipynb`
 
 These derived files are local runtime artifacts and are not shipped in the public release zip.
+
+`floorplans_zones.gpkg` carries the zone provenance and boundary-interface metadata described in the repository `README.md`. It has a `zones` layer with one row per convex part and an `interfaces` layer with one row per boundary sub-segment. ResPlan floorplans live in a local metric frame, so the file is written without a spatial reference.
 
 ## OSM
 
@@ -40,8 +43,11 @@ Bundled public input:
 Derived notebook outputs:
 
 - `data/osm/subset_buildings_gdf.pkl` from `notebooks/OSM_1_Preprocessing.ipynb`
+- `data/osm/osm_zones.gpkg` from `notebooks/OSM_2_Decomposition.ipynb`
 
-This derived file is a local runtime artifact and is not shipped in the public release zip.
+These derived files are local runtime artifacts and are not shipped in the public release zip.
+
+`osm_zones.gpkg` carries the same `zones` and `interfaces` layers as the ResPlan artifact, in the input CRS `EPSG:32633`. Because an OSM footprint is one physical envelope, the whole building is one space and the perimeter, trapezoid, corner, remainder, and interior pieces are zones inside it.
 
 If you want to create an alternative OSM input table in the same public format, use:
 
