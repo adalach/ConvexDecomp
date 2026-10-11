@@ -2,7 +2,7 @@
 osm_convex_decomposer.py
 
 Convex decomposition of 2D polygons (e.g. OSM building parts) using
-recursive splits along extended edges at reflex vertices.
+recursive cuts from reflex vertices.
 
 Design:
 - Polygon-centric: this module does NOT know about buildings, perimeters, etc.
@@ -10,6 +10,11 @@ Design:
 - Decomposition is modelled as a search in "state space" where a state is
   a list of current pieces [P1, P2, ...]. We refine states by splitting
   one non-convex piece at a time.
+- A cut runs from a reflex vertex along a continued edge (or the interior
+  bisector) to the first boundary point it reaches, and splits the piece's
+  vertex list there (convexdecomp.geometry.cuts). Every cut gives exactly two
+  pieces whose areas add up to the piece's, so a decomposition always covers
+  its polygon exactly. A polygon with holes is first cut into hole-less pieces.
 
 Key ideas:
 - We explore the state space with a persistent adaptive beam search.
@@ -40,8 +45,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import split
 
+from convexdecomp.geometry.cuts import cut_along_diagonal, cut_along_ray, inward_bisector
+from convexdecomp.geometry.holes import holeless_polygons
 from convexdecomp.core.search import (
     AdaptiveSearchConfig,
     DecompositionSearchConfig,
@@ -63,8 +69,8 @@ __all__ = [
 # Global tuning constants
 # ---------------------------------------------------------------------------
 
-# Minimum area for any polygon piece to be kept during splitting.
-# Raising this prunes tiny slivers early (faster, but may lose very skinny zones).
+# Smallest piece a cut may produce. A cut that would leave a smaller piece is
+# refused, never accepted without it: dropping the crumb would leave a gap.
 MIN_PART_AREA: float = 0.5
 
 
@@ -120,9 +126,11 @@ class ConvexDecompositionConfig:
         meaningful reflex. Smaller concavities are considered "almost straight".
     max_reflex_per_node : Optional[int]
         Extra cap on how many reflex vertices per polygon we consider at a node.
-        If None, defaults to search_width.
-    length_factor : float
-        How far to extend the splitting line relative to the polygon's diagonal.
+        If None, defaults to max(2 * search_width, 8).
+    cut_snap_vertex_tolerance_m : float
+        A vertex the cut passes within this distance of, before the boundary
+        point the cut would end at, takes the cut instead, so no hairline
+        sliver is left beside it.
     adaptive_search : AdaptiveSearchConfig
         Optional outer retry schedule that starts from a smaller search budget
         and increases depth first, then width, until the first successful
@@ -141,7 +149,6 @@ class ConvexDecompositionConfig:
     weight_compactness: float = 20.0
     min_concavity_deg: float = 2.0
     max_reflex_per_node: Optional[int] = None
-    length_factor: float = 10.0
     track_time: bool = False
     use_bisector_dead_end_fallback: bool = True
     cut_snap_vertex_tolerance_m: float = 0.1
@@ -424,107 +431,25 @@ def find_reflex_vertices_scored(
 
 
 # ---------------------------------------------------------------------------
-# Split helper (extends an incident edge and calls shapely.split)
+# Cuts (exact chords from convexdecomp.geometry.cuts; no overlay involved)
 # ---------------------------------------------------------------------------
-
-def _split_polygon_with_cutter(
-    poly: Polygon,
-    cutter: BaseGeometry,
-    tol_area: float = 1e-12,
-) -> List[Polygon]:
-    """
-    Split `poly` with `cutter` and return cleaned polygon parts.
-
-    If no meaningful split occurs, returns `[poly]`.
-    """
-    if not isinstance(poly, Polygon) or poly.is_empty:
-        return [poly]
-
-    try:
-        res = split(poly, cutter)
-    except Exception:
-        return [poly]
-
-    parts_raw = [
-        g for g in getattr(res, "geoms", [res])
-        if isinstance(g, Polygon) and (not g.is_empty) and (g.area > tol_area)
-    ]
-    if len(parts_raw) <= 1:
-        return [poly]
-
-    parts: List[Polygon] = []
-    for p in parts_raw:
-        q = normalize_polygon(p)
-        if isinstance(q, Polygon) and (not q.is_empty) and q.area >= MIN_PART_AREA:
-            parts.append(q)
-
-    if len(parts) <= 1:
-        return [poly]
-
-    sum_area = sum(p.area for p in parts)
-    if poly.area > 0 and sum_area < 0.9 * poly.area:
-        return [poly]
-
-    return parts
-
-
-def _try_snap_cut_to_existing_vertex(
-    poly: Polygon,
-    coords: Sequence[Tuple[float, float]],
-    origin_idx: int,
-    ux: float,
-    uy: float,
-    snap_tol: float,
-    exclude_indices: set[int],
-    tol_area: float = 1e-12,
-) -> Optional[List[Polygon]]:
-    """
-    If the proposed cut line runs almost through an existing vertex, try using
-    the exact vertex-to-vertex segment instead of the near-miss cut.
-    """
-    if snap_tol <= 0.0:
-        return None
-
-    from shapely.geometry import LineString
-
-    x1, y1 = coords[origin_idx]
-    candidates: List[Tuple[float, float, int]] = []
-
-    for j, (xj, yj) in enumerate(coords):
-        if j in exclude_indices:
-            continue
-        perp_dist = abs((xj - x1) * uy - (yj - y1) * ux)
-        if perp_dist > snap_tol:
-            continue
-        seg_len = math.hypot(xj - x1, yj - y1)
-        if seg_len <= tol_area:
-            continue
-        candidates.append((perp_dist, seg_len, j))
-
-    candidates.sort()
-
-    for _, _, j in candidates:
-        cutter = LineString([coords[origin_idx], coords[j]])
-        parts = _split_polygon_with_cutter(poly, cutter, tol_area=tol_area)
-        if len(parts) > 1:
-            return parts
-
-    return None
 
 def cut_polygon_at_vertex(
     poly: Polygon,
     vidx: int,
     cfg: ConvexDecompositionConfig,
     use_prev: bool = True,
-    tol_area: float = 1e-12,
 ) -> List[Polygon]:
     """
-    Extend an incident edge at vertex `vidx` to a long line and split the polygon.
+    Cut at reflex vertex `vidx` along one of its edges carried on past the vertex.
 
-    Returns the resulting polygon parts. If no real split occurs or results are
-    degenerate, returns [poly].
+    With `use_prev` the previous edge is continued, otherwise the next edge is
+    continued backwards; at a reflex vertex both run into the polygon. The cut
+    ends at the first boundary point it reaches, so it always gives exactly two
+    pieces, whose areas add up to the polygon's.
 
-    Microscopic parts (area < MIN_PART_AREA) are dropped.
+    Returns the two pieces, or [poly] when there is no valid cut, including
+    when a piece would be smaller than MIN_PART_AREA.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return [poly]
@@ -535,59 +460,33 @@ def cut_polygon_at_vertex(
         return [poly]
 
     x1, y1 = coords[vidx]
-
     if use_prev:
         x0, y0 = coords[vidx - 1]
-        dx, dy = x1 - x0, y1 - y0
+        direction = (x1 - x0, y1 - y0)
     else:
         x2, y2 = coords[(vidx + 1) % n]
-        dx, dy = x2 - x1, y2 - y1
+        direction = (x1 - x2, y1 - y2)
 
-    length = math.hypot(dx, dy)
-    if length <= tol_area:
-        return [poly]
-
-    ux, uy = dx / length, dy / length
-    snap_parts = _try_snap_cut_to_existing_vertex(
+    return cut_along_ray(
         poly,
-        coords,
-        origin_idx=vidx,
-        ux=ux,
-        uy=uy,
+        vidx,
+        direction,
         snap_tol=cfg.cut_snap_vertex_tolerance_m,
-        exclude_indices={
-            vidx,
-            (vidx - 1) % n if use_prev else (vidx + 1) % n,
-        },
-        tol_area=tol_area,
+        min_part_area=MIN_PART_AREA,
     )
-    if snap_parts is not None:
-        return snap_parts
-
-    from shapely.geometry import LineString
-
-    minx, miny, maxx, maxy = poly.bounds
-    diag = math.hypot(maxx - minx, maxy - miny)
-    L = max(diag * cfg.length_factor, diag + 1.0)
-
-    p_start = (x1 - ux * L, y1 - uy * L)
-    p_end = (x1 + ux * L, y1 + uy * L)
-    return _split_polygon_with_cutter(poly, LineString([p_start, p_end]), tol_area=tol_area)
 
 
 def cut_polygon_at_vertex_bisector(
     poly: Polygon,
     vidx: int,
     cfg: ConvexDecompositionConfig,
-    tol_area: float = 1e-12,
 ) -> List[Polygon]:
     """
-    Split a polygon with the angle-bisector line through vertex `vidx`.
+    Cut at vertex `vidx` along the bisector of the polygon's interior angle.
 
-    This is a fallback for cases where extending an incident edge either
-    creates slivers or fails to progress. The line orientation is based on
-    the sum of the unit vectors pointing from the vertex to its adjacent
-    vertices, which defines the bisector line up to sign.
+    This is a fallback for cases where continuing an incident edge either
+    creates slivers or fails to progress. Like the edge cut, it ends at the
+    first boundary point it reaches.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return [poly]
@@ -597,81 +496,30 @@ def cut_polygon_at_vertex_bisector(
     if n <= 3 or vidx < 0 or vidx >= n:
         return [poly]
 
-    x1, y1 = coords[vidx]
-    x0, y0 = coords[vidx - 1]
-    x2, y2 = coords[(vidx + 1) % n]
-
-    vx0, vy0 = x0 - x1, y0 - y1
-    vx2, vy2 = x2 - x1, y2 - y1
-    len0 = math.hypot(vx0, vy0)
-    len2 = math.hypot(vx2, vy2)
-    if len0 <= tol_area or len2 <= tol_area:
+    direction = inward_bisector(poly, vidx)
+    if direction is None:
         return [poly]
-
-    ux0, uy0 = vx0 / len0, vy0 / len0
-    ux2, uy2 = vx2 / len2, vy2 / len2
-    dx, dy = ux0 + ux2, uy0 + uy2
-    if math.hypot(dx, dy) <= tol_area:
-        dx, dy = -(uy2 - uy0), (ux2 - ux0)
-
-    length = math.hypot(dx, dy)
-    if length <= tol_area:
-        return [poly]
-
-    ux, uy = dx / length, dy / length
-    snap_parts = _try_snap_cut_to_existing_vertex(
+    return cut_along_ray(
         poly,
-        coords,
-        origin_idx=vidx,
-        ux=ux,
-        uy=uy,
+        vidx,
+        direction,
         snap_tol=cfg.cut_snap_vertex_tolerance_m,
-        exclude_indices={vidx, (vidx - 1) % n, (vidx + 1) % n},
-        tol_area=tol_area,
+        min_part_area=MIN_PART_AREA,
     )
-    if snap_parts is not None:
-        return snap_parts
-
-    from shapely.geometry import LineString
-
-    minx, miny, maxx, maxy = poly.bounds
-    diag = math.hypot(maxx - minx, maxy - miny)
-    L = max(diag * cfg.length_factor, diag + 1.0)
-
-    line = LineString([(x1 - ux * L, y1 - uy * L), (x1 + ux * L, y1 + uy * L)])
-    return _split_polygon_with_cutter(poly, line, tol_area=tol_area)
 
 
 def cut_polygon_at_vertex_pair(
     poly: Polygon,
     start_idx: int,
     end_idx: int,
-    tol_area: float = 1e-12,
 ) -> List[Polygon]:
     """
-    Split a polygon with the exact diagonal between two existing exterior vertices.
+    Cut a polygon along the diagonal between two of its vertices.
+
+    Returns [poly] when the diagonal does not run inside the polygon or a piece
+    would be smaller than MIN_PART_AREA.
     """
-    from shapely.geometry import LineString
-
-    if not isinstance(poly, Polygon) or poly.is_empty:
-        return [poly]
-
-    coords = list(poly.exterior.coords)[:-1]
-    n = len(coords)
-    if n <= 3:
-        return [poly]
-    if start_idx < 0 or end_idx < 0 or start_idx >= n or end_idx >= n:
-        return [poly]
-    if start_idx == end_idx:
-        return [poly]
-    if abs(start_idx - end_idx) == 1 or {start_idx, end_idx} == {0, n - 1}:
-        return [poly]
-
-    return _split_polygon_with_cutter(
-        poly,
-        LineString([coords[start_idx], coords[end_idx]]),
-        tol_area=tol_area,
-    )
+    return cut_along_diagonal(poly, start_idx, end_idx, min_part_area=MIN_PART_AREA)
 
 
 # ---------------------------------------------------------------------------
@@ -997,6 +845,13 @@ def decompose_polygon_with_stats(
             "fallback_used": None,
         })
 
+    # The cuts work on exterior rings only, so a polygon with holes is first cut
+    # into hole-less pieces, and each piece is decomposed on its own.
+    if poly.interiors:
+        pieces = [piece for piece in holeless_polygons(poly) if piece.area > 0.0]
+        results = [decompose_polygon_with_stats(piece, cfg) for piece in pieces]
+        return _with_time(_combine_piece_results(results, cfg))
+
     # Early exit: polygon already convex → treat as one successful variant
     if is_convex_polygon(poly):
         return _with_time({
@@ -1108,6 +963,59 @@ def decompose_polygon_with_stats(
         "fallback_used": best_variant_record.get("fallback_used"),
     })
 
+
+
+_SUMMED_COUNTS = (
+    "n_failed_terminal_states",
+    "n_depth_limit_dead_ends",
+    "n_no_reflex_dead_ends",
+    "n_min_area_dead_ends",
+    "n_states_seen",
+    "search_total_states",
+    "search_split_attempts",
+    "search_successful_splits",
+    "bisector_fallback_attempts",
+    "bisector_fallback_successes",
+    "search_attempt_count",
+)
+
+
+def _combine_piece_results(results: List[Dict[str, Any]], cfg: ConvexDecompositionConfig) -> Dict[str, Any]:
+    """One result for a polygon whose hole-less pieces were decomposed separately.
+
+    The polygon succeeds only if every piece does; its best variant is then the
+    pieces' best variants together. Counters are summed, search budgets take
+    the largest value any piece needed.
+    """
+    success = bool(results) and all(r["convex_success"] for r in results)
+    best_variant = [part for r in results for part in r["best_variant"]] if success else []
+    n_variants = 1
+    for r in results:
+        n_variants *= int(r["n_variants"])
+    reasons = list(dict.fromkeys(
+        str(r["search_terminated_by"]) for r in sorted(results, key=lambda r: r["convex_success"])
+    ))
+    depths = [r["search_depth_used"] for r in results if r.get("search_depth_used") is not None]
+    widths = [r["search_width_used"] for r in results if r.get("search_width_used") is not None]
+    combined: Dict[str, Any] = {
+        "convex_success": success,
+        "n_variants": n_variants if success else 0,
+        "best_variant": best_variant,
+        "fully_convex_best": success,
+        "has_small_zone": any(part.area < cfg.min_area_m2 for part in best_variant),
+        "n_parts": len(best_variant),
+        "search_terminated_by": "+".join(reasons) if reasons else "no_hole_less_pieces",
+        "search_max_depth": max((int(r["search_max_depth"]) for r in results), default=0),
+        "search_max_width": max((int(r["search_max_width"]) for r in results), default=0),
+        "search_depth_used": max(depths) if depths else None,
+        "search_width_used": max(widths) if widths else None,
+        "search_attempt_history": [h for r in results for h in (r.get("search_attempt_history") or [])],
+        "fallback_used": next((r["fallback_used"] for r in results if r.get("fallback_used")), None),
+        "n_hole_less_pieces": len(results),
+    }
+    for key in _SUMMED_COUNTS:
+        combined[key] = int(sum(int(r.get(key, 0) or 0) for r in results))
+    return combined
 
 
 def decompose_polygon_best(poly: Polygon, cfg: ConvexDecompositionConfig) -> List[Polygon]:

@@ -87,11 +87,18 @@ ConvexDecomp/
 ## Structure
 
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
+- `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`) and the splitting of polygons with holes into hole-less pieces (`holes.py`).
 - `src/convexdecomp/resplan/`: ResPlan preprocessing, room operations, and decomposition helpers.
 - `src/convexdecomp/osm/`: OSM normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
 - `external/resplan/`: created locally on first ResPlan run as a dataset source clone; not shipped in the public repo zip.
+
+## Exact Cuts
+
+Every cut the search makes runs from a reflex vertex, along a continued edge, an axis or the interior bisector, to the first point of the boundary it reaches, or along a diagonal between two vertices. The polygon's own vertex list is then split in two at the cut's ends. A cut therefore always gives exactly two pieces that share the cut exactly, and their areas add up to the polygon's: a decomposition covers its polygon with no gap and no overlap. A cut that would leave a piece below the minimum area is refused rather than accepted without the piece. Polygons with holes are first split into hole-less pieces.
+
+Earlier versions cut with `shapely.ops.split` along a long line through the vertex. That can cross a polygon several times, and GEOS occasionally returns the pieces without one of the faces; the OSM adapter also dropped pieces below 0.5 m² and accepted any cut keeping 90% of the area. On the bundled OSM case study this left 147 of the 2,699 buildings reported as fully convex with parts that did not fill the footprint (8 by more than 10 m²). `run_building_decomposition` now reports `area_error_m2` and `building_area_conserved` per building.
 
 ## Zone Provenance And Artificial Splits
 

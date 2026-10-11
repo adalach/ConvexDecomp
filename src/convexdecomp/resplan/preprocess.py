@@ -194,24 +194,26 @@ def _simplify_ring(coords, tol: float) -> List[Tuple[float, float]]:
     if len(deduped) < 4:
         return pts
 
+    # Drop vertices where the ring runs straight on. "Straight" is judged by the
+    # turn angle, and one vertex goes at a time: the raw cross product is near zero
+    # beside any very short edge, and removing both ends of a short edge in one
+    # pass took a real corner with it (a 12.2 m2 rectangle became a triangle).
     work = deduped[:-1]
     changed = True
     while changed and len(work) > 3:
         changed = False
-        keep = []
         n = len(work)
         for i in range(n):
             a, b, c = work[(i - 1) % n], work[i], work[(i + 1) % n]
-            cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
-            scale = max(_dist(a, b), _dist(b, c), 1.0)
-            if abs(cross) > 1e-9 * scale:
-                keep.append(b)
+            lab, lbc = _dist(a, b), _dist(b, c)
+            if lab <= tol or lbc <= tol:
                 continue
-
-            changed = True
-        if len(keep) < 3:
-            return deduped
-        work = keep
+            cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+            dot = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1])
+            if dot > 0 and abs(cross) <= 1e-9 * lab * lbc:
+                del work[i]
+                changed = True
+                break
 
     if work and work[0] != work[-1]:
         work.append(work[0])
@@ -219,6 +221,12 @@ def _simplify_ring(coords, tol: float) -> List[Tuple[float, float]]:
 
 
 def simplify_polygon_vertices(poly: Polygon, tol: float = 1e-9) -> Polygon:
+    """Merge vertices closer than `tol` and drop straight ones.
+
+    The polygon comes back unchanged if the result would differ in area by
+    more than merging points within `tol` can account for: a clean-up must not
+    reshape a room.
+    """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return poly
     shell = _simplify_ring(poly.exterior.coords, tol)
@@ -231,9 +239,13 @@ def simplify_polygon_vertices(poly: Polygon, tol: float = 1e-9) -> Polygon:
         cleaned = Polygon(shell, holes)
         if not cleaned.is_valid:
             cleaned = cleaned.buffer(0)
-        return cleaned if isinstance(cleaned, Polygon) and not cleaned.is_empty else poly
     except Exception:
         return poly
+    if not isinstance(cleaned, Polygon) or cleaned.is_empty:
+        return poly
+    if abs(cleaned.area - poly.area) > tol * poly.length + 1e-9 * poly.area:
+        return poly
+    return cleaned
 
 
 def is_degenerate_polygon(poly: Polygon, tol: float = 1e-9) -> bool:
