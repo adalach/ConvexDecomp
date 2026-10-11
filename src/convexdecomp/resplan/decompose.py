@@ -49,6 +49,8 @@ __all__ = [
     "HVConvexDecompositionConfig",
     "all_rooms_above_area",
     "all_rooms_convex",
+    "check_plan_area_conservation",
+    "plan_area_ledger",
     "decompose_polygon_hv_with_diagnostics",
     "plan_has_rooms",
     "plan_room_polygons",
@@ -231,6 +233,57 @@ def all_rooms_above_area(
         return False
     areas = np.fromiter((poly.area for poly in polys), dtype=float)
     return bool((areas >= min_area).all())
+
+
+#: A room type whose convex parts differ in total area from the plan's rooms by
+#: more than this fraction did not decompose correctly.
+AREA_CONSERVATION_REL_TOL = 1e-6
+
+
+def plan_area_ledger(
+    plan: Dict[str, Any],
+    best_plan: Dict[str, Any],
+    room_keys: Sequence[str] = DEFAULT_ROOM_KEYS,
+) -> List[Dict[str, Any]]:
+    """Area of every room type before and after decomposition, for one plan.
+
+    Compares the plan as it was handed over with the decomposed plan, so the
+    vertex clean-up and the splitting of rooms with holes are covered as well
+    as the cuts.
+    """
+    rows = []
+    for key in room_keys:
+        before = sum(p.area for p in plan.get(key, []) or [] if isinstance(p, Polygon) and not p.is_empty)
+        if before <= 0.0:
+            continue
+        after = sum(p.area for p in best_plan.get(key, []) or [] if isinstance(p, Polygon) and not p.is_empty)
+        rows.append({"plan_id": plan.get("id"), "room_key": key, "area_before_m2": before,
+                     "area_after_m2": after, "area_error_m2": after - before})
+    return rows
+
+
+def check_plan_area_conservation(
+    ledger_rows: Sequence[Dict[str, Any]],
+    *,
+    rel_tol: float = AREA_CONSERVATION_REL_TOL,
+    raise_on_violation: bool = True,
+) -> List[Dict[str, Any]]:
+    """The room types whose decomposed area differs from the plan's.
+
+    With ``raise_on_violation`` a non-empty result raises instead of returning,
+    so a notebook stops before a plan with a missing piece goes any further.
+    """
+    violations = [
+        row for row in ledger_rows
+        if abs(row["area_error_m2"]) > rel_tol * row["area_before_m2"]
+    ]
+    if raise_on_violation and violations:
+        listed = ", ".join(f"{row['plan_id']}/{row['room_key']}" for row in violations[:20])
+        raise ValueError(
+            f"{len(violations)} room types changed area during the decomposition "
+            f"(more than {rel_tol:g} of the room area): {listed}"
+        )
+    return violations
 
 
 def decompose_polygon_hv_with_diagnostics(

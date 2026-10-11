@@ -18,7 +18,9 @@ from convexdecomp.plotting.geometry_grid import GHSL_gridplot
 
 __all__ = [
     "annotate_polygon_failure_reasons",
+    "area_ledger",
     "build_parts_geometry",
+    "check_area_conservation",
     "classify_failure_reason",
     "collect_building_polygons",
     "collect_decomposition_polygons",
@@ -384,6 +386,81 @@ def min_part_area(parts: list[Polygon]) -> float:
     return float(min(areas)) if areas else float("nan")
 
 
+def area_ledger(row: pd.Series, inputs: list[Polygon], parts: list[Polygon] | None) -> dict[str, Any]:
+    """How far each stage's pieces are from the footprint's area, for one building.
+
+    The footprint is the building's ``geometry`` as it enters the decomposition
+    stage. Each stage is compared with it, not with the stage before, so a loss
+    anywhere shows up at every later stage too:
+
+    - ``perimeter_area_error_m2``: perimeter band plus core (NaN when the
+      building was not split into perimeter and core),
+    - ``inputs_area_error_m2``: the polygons handed to the convex decomposer,
+    - ``parts_area_error_m2``: the convex parts (NaN when the decomposition failed).
+
+    ``building_area_conserved`` is True when the decomposition succeeded and
+    every error is within ``AREA_CONSERVATION_REL_TOL`` of the footprint area.
+    """
+    footprint = row.get("geometry")
+    footprint_area = float(footprint.area) if footprint is not None and not footprint.is_empty else float("nan")
+
+    def _error(pieces) -> float:
+        return float(sum(p.area for p in extract_polygons(pieces)) - footprint_area)
+
+    perimeter_error = (
+        _error([row.get("perimeter_geom"), row.get("interior_geom")])
+        if bool(row.get("perimeter_defined", False))
+        else float("nan")
+    )
+    inputs_error = _error(inputs) if inputs else float("nan")
+    parts_error = _error(parts) if parts else float("nan")
+    tol = AREA_CONSERVATION_REL_TOL * footprint_area
+    errors = [e for e in (perimeter_error, inputs_error) if not np.isnan(e)]
+    conserved = (
+        parts is not None
+        and bool(parts)
+        and not np.isnan(footprint_area)
+        and abs(parts_error) <= tol
+        and all(abs(e) <= tol for e in errors)
+    )
+    return {
+        "footprint_area_m2": footprint_area,
+        "perimeter_area_error_m2": perimeter_error,
+        "inputs_area_error_m2": inputs_error,
+        "parts_area_error_m2": parts_error,
+        "building_area_conserved": bool(conserved),
+    }
+
+
+def check_area_conservation(
+    buildings_convex_gdf: pd.DataFrame,
+    *,
+    rel_tol: float = AREA_CONSERVATION_REL_TOL,
+    raise_on_violation: bool = True,
+) -> pd.DataFrame:
+    """The buildings where a stage of the decomposition gained or lost area.
+
+    A decomposition that failed is not a violation (it has no parts to
+    check); a stage that changed the area is, at any stage. With
+    ``raise_on_violation`` a non-empty result raises instead of returning, so
+    a notebook stops before a building with a missing piece goes any further.
+    """
+    df = buildings_convex_gdf
+    tol = rel_tol * df["footprint_area_m2"]
+    stage_columns = ["perimeter_area_error_m2", "inputs_area_error_m2", "parts_area_error_m2"]
+    off = pd.Series(False, index=df.index)
+    for column in stage_columns:
+        off |= df[column].abs().fillna(0.0) > tol
+    violations = df.loc[off, ["sample_id", "footprint_area_m2", *stage_columns]]
+    if raise_on_violation and len(violations):
+        listed = ", ".join(map(str, violations["sample_id"].head(20)))
+        raise ValueError(
+            f"{len(violations)} buildings changed area during the decomposition "
+            f"(more than {rel_tol:g} of the footprint): {listed}"
+        )
+    return violations
+
+
 def run_building_decomposition(
     buildings_convex_gdf: gpd.GeoDataFrame,
     cfg: Any,
@@ -406,7 +483,7 @@ def run_building_decomposition(
                     "n_successful_polygons": 0,
                     "building_has_small_zone": False,
                     "area_error_m2": float("nan"),
-                    "building_area_conserved": False,
+                    **area_ledger(row, [], None),
                     "convex_parts_geom": None,
                     "polygon_times_seconds": [],
                     "polygon_fallbacks": [],
@@ -499,8 +576,7 @@ def run_building_decomposition(
             )
 
         building_fully_convex = bool(polygon_flags) and all(polygon_flags)
-        input_area_m2 = float(sum(polygon.area for polygon in polygons))
-        building_area_conserved = building_fully_convex and area_error_m2 <= AREA_CONSERVATION_REL_TOL * input_area_m2
+        ledger = area_ledger(row, polygons, convex_parts if building_fully_convex else None)
         n_successful_polygons = int(sum(polygon_flags))
         used_depths = [int(value) for value in polygon_search_depths if value is not None]
         used_widths = [int(value) for value in polygon_search_widths if value is not None]
@@ -519,7 +595,7 @@ def run_building_decomposition(
                 "n_successful_polygons": n_successful_polygons,
                 "building_has_small_zone": building_has_small_zone,
                 "area_error_m2": area_error_m2 if building_fully_convex else float("nan"),
-                "building_area_conserved": building_area_conserved,
+                **ledger,
                 "convex_parts_geom": build_parts_geometry(convex_parts),
                 "polygon_times_seconds": polygon_times,
                 "polygon_fallbacks": polygon_fallbacks,
