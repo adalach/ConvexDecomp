@@ -223,7 +223,18 @@ def run_polygon_state_search(
     state_score_fn: Optional[Callable[[List[Polygon]], Any]] = None,
     min_piece_area: Optional[float] = None,
     stop_on_first_success: bool = False,
+    ranking: str = "reflex_first",
 ) -> Dict[str, Any]:
+    """Beam search over states (lists of pieces) until enough fully convex states are found.
+
+    ``ranking`` orders the states the beam keeps. ``"reflex_first"`` ranks by
+    the number of non-convex pieces, then their reflex vertices, then a penalty
+    for pieces near the minimum area, and only then by ``state_score_fn``.
+    ``"score_first"`` ranks by the near-minimum-area penalty and the score, and
+    uses the counts only to break ties.
+    """
+    if ranking not in ("reflex_first", "score_first"):
+        raise ValueError(f"unknown ranking {ranking!r}")
     initial_state = ExpandedState(tuple(initial_pieces), ())
     variants: List[Dict[str, Any]] = []
 
@@ -266,6 +277,9 @@ def run_polygon_state_search(
     frontier_nodes: Dict[Hashable, _QueuedState] = {}
     closed_states: set[Hashable] = set()
     priority_cache: Dict[Hashable, Tuple[Any, ...]] = {}
+    # Whether a state is fully convex, recorded with its priority: the priority's
+    # first entry is the non-convex count only under the default ranking.
+    goal_states: Dict[Hashable, bool] = {}
     piece_stats_cache: Dict[Tuple[Tuple[Tuple[float, float], ...], int], Tuple[bool, int, float]] = {}
     history: List[Dict[str, Any]] = []
     insertion_order = 0
@@ -339,15 +353,28 @@ def run_polygon_state_search(
                 partition_key = tuple(partition_score)
             else:
                 partition_key = (float(partition_score),)
-            cached = (
-                int(n_nonconvex),
-                int(total_reflex),
-                round(float(near_min_area_penalty), 6),
-                *partition_key,
+            tail = (
                 int(len(pieces)),
                 round(-float(min_area_value if math.isfinite(min_area_value) else 0.0), 6),
             )
+            if ranking == "score_first":
+                cached = (
+                    round(float(near_min_area_penalty), 6),
+                    *partition_key,
+                    int(n_nonconvex),
+                    int(total_reflex),
+                    *tail,
+                )
+            else:
+                cached = (
+                    int(n_nonconvex),
+                    int(total_reflex),
+                    round(float(near_min_area_penalty), 6),
+                    *partition_key,
+                    *tail,
+                )
             priority_cache[key] = cached
+            goal_states[key] = n_nonconvex == 0
         # For satisficing decomposition, a tie between equally promising states
         # should prefer the deeper branch because it is closer to a full split.
         return (*cached, 1 if fallback_labels else 0, -int(depth))
@@ -368,7 +395,7 @@ def run_polygon_state_search(
 
     def _admit_existing_node(node: _QueuedState) -> None:
         nonlocal n_failed
-        is_goal = bool(node.priority and node.priority[0] == 0)
+        is_goal = goal_states.get(node.key, False)
         if not is_goal and node.depth >= current_depth_limit:
             if adaptive_enabled and current_depth_limit < max_depth_limit:
                 _assign_to_pool(node, "deferred")
@@ -421,7 +448,7 @@ def run_polygon_state_search(
         for node in sorted(list(overflow.values()), key=_node_sort_key):
             if current_width_limit is not None and len(active) >= current_width_limit:
                 break
-            if node.depth >= current_depth_limit and node.priority[0] != 0:
+            if node.depth >= current_depth_limit and not goal_states.get(node.key, False):
                 continue
             _assign_to_pool(node, "active")
         _trim_active_to_width()

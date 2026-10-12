@@ -44,7 +44,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
 
@@ -138,6 +138,14 @@ class ConvexDecompositionConfig:
         Optional outer retry schedule that starts from a smaller search budget
         and increases depth first, then width, until the first successful
         parameter setting is found.
+    score_fn : callable or None
+        Score of a list of pieces (lower is better) used everywhere the search
+        compares states and picks the final variant, e.g. a
+        ``convexdecomp.core.scores.PartitionScore``. None uses `weight_parts`
+        and `weight_compactness` with the area-weighted compactness.
+    beam_ranking : str
+        How the beam orders states: ``"reflex_first"`` (non-convex pieces and
+        reflex vertices first, the score breaks ties) or ``"score_first"``.
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
@@ -156,6 +164,8 @@ class ConvexDecompositionConfig:
     use_bisector_dead_end_fallback: bool = True
     cut_snap_vertex_tolerance_m: float = 0.1
     adaptive_search: AdaptiveSearchConfig = field(default_factory=_default_osm_adaptive_search)
+    score_fn: Optional[Callable[[Sequence[Polygon]], float]] = None
+    beam_ranking: str = "reflex_first"
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -569,6 +579,13 @@ def _score_polys(
     )
 
 
+def _partition_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
+    """The configured score of a list of pieces (lower is better)."""
+    if cfg.score_fn is not None:
+        return float(cfg.score_fn(list(polys)))
+    return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
+
+
 # ---------------------------------------------------------------------------
 # Core state-space search for one polygon
 # ---------------------------------------------------------------------------
@@ -715,7 +732,7 @@ def _enumerate_states_for_polygon(
                             min_area_pruned = True
                             continue
                         all_convex_parts = all(is_convex_polygon(part) for part in parts)
-                        score = _score_polys(parts, cfg.weight_parts, cfg.weight_compactness)
+                        score = _partition_score(parts, cfg)
                         diagonal_candidates.append((all_convex_parts, score, parts))
 
                 if diagonal_candidates:
@@ -784,8 +801,9 @@ def _enumerate_states_for_polygon(
         expand_state_fn=_expand_state,
         adaptive_cfg=cfg.adaptive_search,
         default_width=cfg.search_width,
-        state_score_fn=lambda pieces: _score_polys(pieces, cfg.weight_parts, cfg.weight_compactness),
+        state_score_fn=lambda pieces: _partition_score(pieces, cfg),
         min_piece_area=cfg.min_area_m2,
+        ranking=cfg.beam_ranking,
     )
     dead_end_counts = search.get("dead_end_counts") or {}
     return {
@@ -961,7 +979,7 @@ def decompose_polygon_with_stats(
         best_uses_fallback = True
         for i, var in enumerate(var_list):
             parts = var["parts"]
-            score = _score_polys(parts, cfg.weight_parts, cfg.weight_compactness)
+            score = _partition_score(parts, cfg)
             uses_fallback = bool(var.get("fallback_used"))
             if (score, uses_fallback) < (best_score, best_uses_fallback):
                 best_score = score
