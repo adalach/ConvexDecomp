@@ -146,6 +146,11 @@ class ConvexDecompositionConfig:
     beam_ranking : str
         How the beam orders states: ``"reflex_first"`` (non-convex pieces and
         reflex vertices first, the score breaks ties) or ``"score_first"``.
+    bisector_always : bool
+        Offer the cut along the bisector of the interior angle at every reflex
+        vertex, next to the two carried-on edges. Otherwise the bisector is only
+        tried where neither edge gives a cut. At a shallow bend both edges run
+        almost along the piece and leave slivers, while the bisector cuts across.
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
@@ -166,6 +171,7 @@ class ConvexDecompositionConfig:
     adaptive_search: AdaptiveSearchConfig = field(default_factory=_default_osm_adaptive_search)
     score_fn: Optional[Callable[[Sequence[Polygon]], float]] = None
     beam_ranking: str = "reflex_first"
+    bisector_always: bool = False
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -751,9 +757,12 @@ def _enumerate_states_for_polygon(
         min_area_pruned = False
 
         for vidx, _ in best_reflexes:
-            for use_prev in (True, False):
+            for use_prev in (True, False, None) if cfg.bisector_always else (True, False):
                 result.metrics.update(["search_split_attempts"])
-                parts = cut_polygon_at_vertex(target_poly, vidx, cfg, use_prev=use_prev)
+                if use_prev is None:
+                    parts = cut_polygon_at_vertex_bisector(target_poly, vidx, cfg)
+                else:
+                    parts = cut_polygon_at_vertex(target_poly, vidx, cfg, use_prev=use_prev)
                 if len(parts) != 2:
                     continue
                 if any(part.area < cfg.min_area_m2 for part in parts):

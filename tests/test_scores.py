@@ -67,6 +67,19 @@ def test_default_config_is_unchanged():
     assert sorted(round(p.area, 9) for p in a["best_variant"]) == sorted(round(p.area, 9) for p in b["best_variant"])
 
 
+# A 4.5 m wide band with a shallow bend: carrying either edge on at the bend runs
+# almost along the band, the bisector cuts across it.
+BENT_BAND = Polygon([(0, 0), (20, 0), (40, 1.4), (40, 5.9), (19.84, 4.49), (0, 4.5)])
+
+
+def test_bisector_always_cuts_a_shallow_bend_across():
+    plain = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig())["best_variant"]
+    bis = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig(bisector_always=True))["best_variant"]
+    assert math.isclose(sum(p.area for p in bis), BENT_BAND.area, rel_tol=1e-9)
+    assert len(bis) == 2
+    assert min(minimum_width(p) for p in bis) > min(minimum_width(p) for p in plain)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
