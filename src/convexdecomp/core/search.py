@@ -126,15 +126,22 @@ def _resolve_adaptive_limits(
     return adaptive_enabled, depth, max_depth, width, max_width, depth_step, width_step
 
 
-def _piece_cache_key(poly: Polygon) -> Tuple[Tuple[Tuple[float, float], ...], int]:
-    return raw_ring_key(poly), int(len(poly.interiors))
+def _piece_cache_key(poly: Polygon) -> Tuple[Tuple[Tuple[float, float], ...], ...]:
+    return (raw_ring_key(poly), *(raw_ring_key(Polygon(ring)) for ring in poly.interiors))
 
 
 def _count_reflex_vertices(poly: Polygon, *, tol: float = 0.0) -> int:
+    """Reflex vertices of the piece: those of its outer ring, and every corner of a hole
+    that points into the floor (a convex corner of the hole)."""
+    count = 0
     coords, cross, orientation = polygon_turn_crosses(poly)
-    if coords is None or len(coords) <= 3 or cross.size == 0:
-        return 0
-    return int(np.count_nonzero(cross * orientation < -tol))
+    if coords is not None and len(coords) > 3 and cross.size:
+        count += int(np.count_nonzero(cross * orientation < -tol))
+    for ring in poly.interiors:
+        coords, cross, orientation = polygon_turn_crosses(Polygon(ring))
+        if coords is not None and cross.size:
+            count += int(np.count_nonzero(cross * orientation > tol))
+    return count
 
 
 def _attempt_summary(result: Dict[str, Any], depth: int, width: Optional[int]) -> Dict[str, Any]:
@@ -430,6 +437,15 @@ def run_polygon_state_search(
                 continue
             if current_width_limit is not None and max_width_limit is not None and current_width_limit < max_width_limit:
                 current_width_limit = min(max_width_limit, current_width_limit + width_step)
+                _promote_width_budget()
+                if active:
+                    return True
+                continue
+            if not variants and overflow and current_width_limit is not None:
+                # Nothing has succeeded within the budget, but states are still waiting:
+                # keep widening, best states first, until one succeeds or the cap on
+                # failed states ends the search.
+                current_width_limit += width_step
                 _promote_width_budget()
                 if active:
                     return True

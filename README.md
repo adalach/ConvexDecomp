@@ -87,7 +87,7 @@ ConvexDecomp/
 ## Structure
 
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
-- `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`) and the splitting of polygons with holes into hole-less pieces (`holes.py`).
+- `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`), the exact openings of a hole that the OSM search tries (`openings.py`), and the splitting of polygons with holes into hole-less pieces used in preprocessing and by ResPlan (`holes.py`).
 - `src/convexdecomp/resplan/`: ResPlan preprocessing, room operations, and decomposition helpers.
 - `src/convexdecomp/osm/`: OSM normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
@@ -96,7 +96,11 @@ ConvexDecomp/
 
 ## Exact Cuts
 
-Every cut the search makes runs from a reflex vertex, along a continued edge, an axis or the interior bisector, to the first point of the boundary it reaches, or along a diagonal between two vertices. The polygon's own vertex list is then split in two at the cut's ends. A cut therefore always gives exactly two pieces that share the cut exactly, and their areas add up to the polygon's: a decomposition covers its polygon with no gap and no overlap. A cut that would leave a piece below the minimum area is refused rather than accepted without the piece. Polygons with holes are first split into hole-less pieces.
+Every cut the search makes runs from a reflex vertex, along a continued edge, an axis or the interior bisector, to the first point of the boundary it reaches, or along a diagonal between two vertices. The polygon's own vertex list is then split in two at the cut's ends. A cut therefore always gives exactly two pieces that share the cut exactly, and their areas add up to the polygon's: a decomposition covers its polygon with no gap and no overlap. A cut that would leave a piece below the minimum area is refused rather than accepted without the piece.
+
+A hole is opened the same way, inside the search. Two chords, each from a vertex of the hole to the first point of the outer boundary it reaches, cut the polygon into two pieces that each take part of the hole's boundary; where the hole already touches the outer boundary, one chord is enough. Every such pair is a child of the state, ranked and pruned like any other cut, so the search can choose how to open the hole rather than having it fixed beforehand. Two openings followed by each other's chord reach the same state, which the search expands only once. Further holes go to the piece that contains them and are opened later. Only if no pair of chords opens a hole does the search fall back to `holeless_polygons`.
+
+When nothing has succeeded within the adaptive budget but states are still waiting, the search keeps widening, best states first, until one succeeds or `max_failed_states` ends it.
 
 Earlier versions cut with `shapely.ops.split` along a long line through the vertex. That can cross a polygon several times, and GEOS occasionally returns the pieces without one of the faces; the OSM adapter also dropped pieces below 0.5 m² and accepted any cut keeping 90% of the area. On the bundled OSM case study this left 147 of the 2,699 buildings reported as fully convex with parts that did not fill the footprint (8 by more than 10 m²).
 

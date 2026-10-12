@@ -14,7 +14,9 @@ Design:
   bisector) to the first boundary point it reaches, and splits the piece's
   vertex list there (convexdecomp.geometry.cuts). Every cut gives exactly two
   pieces whose areas add up to the piece's, so a decomposition always covers
-  its polygon exactly. A polygon with holes is first cut into hole-less pieces.
+  its polygon exactly. A piece with a hole is opened by two such chords from
+  the hole's vertices (convexdecomp.geometry.openings); each way of opening it
+  is a child state like any other cut.
 
 Key ideas:
 - We explore the state space with a persistent adaptive beam search.
@@ -48,6 +50,7 @@ from shapely.geometry.base import BaseGeometry
 
 from convexdecomp.geometry.cuts import cut_along_diagonal, cut_along_ray, inward_bisector
 from convexdecomp.geometry.holes import holeless_polygons
+from convexdecomp.geometry.openings import hole_openings
 from convexdecomp.core.search import (
     AdaptiveSearchConfig,
     DecompositionSearchConfig,
@@ -165,6 +168,7 @@ class ConvexDecompositionConfig:
 # ---------------------------------------------------------------------------
 
 # Cache canonical polygon keys for states keyed by raw ring key
+_RING_SEPARATOR: Tuple[float, float] = (math.inf, math.inf)
 _POLY_KEY_CACHE: Dict[Tuple[Tuple[float, float], ...], Tuple[Tuple[float, float], ...]] = {}
 
 
@@ -187,13 +191,16 @@ def _polygon_orientation(coords: Sequence[Tuple[float, float]]) -> bool:
 
 def _raw_ring_key(poly: Polygon, ndigits: int = 6) -> Tuple[Tuple[float, float], ...]:
     """
-    Raw key for a polygon's exterior ring (before normalisation).
-    Used only for caching.
+    Raw key for a polygon's rings (before normalisation), holes after the
+    exterior, each behind a separator point. Used only for caching.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return tuple()
-    coords = list(poly.exterior.coords)
-    return tuple((round(x, ndigits), round(y, ndigits)) for (x, y) in coords)
+    key = [(round(x, ndigits), round(y, ndigits)) for (x, y) in poly.exterior.coords]
+    for ring in poly.interiors:
+        key.append(_RING_SEPARATOR)
+        key.extend((round(x, ndigits), round(y, ndigits)) for (x, y) in ring.coords)
+    return tuple(key)
 
 
 def is_convex_polygon(poly: Polygon, tol: float = 0.0) -> bool:
@@ -210,7 +217,7 @@ def normalize_polygon(
 ) -> Polygon:
     """
     Snap very close vertices and remove almost-collinear vertices on the exterior ring.
-    Interiors (holes) are ignored here; this cleaner is aimed at perimeter-style shapes.
+    Holes are kept as they are; this cleaner is aimed at perimeter-style shapes.
 
     Returns a cleaned Polygon; if cleaning fails or changes the polygon too much,
     returns the original polygon.
@@ -282,7 +289,7 @@ def normalize_polygon(
         dedup.append(dedup[0])
 
     try:
-        cleaned_poly = Polygon(dedup)
+        cleaned_poly = Polygon(dedup, [list(ring.coords) for ring in poly.interiors])
         if not cleaned_poly.is_valid or cleaned_poly.is_empty:
             return poly
         if poly.area > 0:
@@ -326,7 +333,9 @@ def _poly_key_for_state(poly: Polygon, ndigits: int = 3) -> Tuple[Tuple[float, f
 
     - Normalize polygon (snap + drop collinear vertices).
     - Drop very small polygons (area < MIN_PART_AREA).
-    - Canonicalise exterior ring w.r.t. rotation/orientation.
+    - Canonicalise exterior ring w.r.t. rotation/orientation; holes follow in
+      sorted order, each behind a separator point, so a piece with a hole
+      never shares a key with the same outline without it.
     - Results are cached by the raw ring key for speed.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
@@ -344,6 +353,8 @@ def _poly_key_for_state(poly: Polygon, ndigits: int = 3) -> Tuple[Tuple[float, f
     else:
         coords = list(norm.exterior.coords)
         key = _ring_canonical_key(coords, ndigits=ndigits)
+        for hole_key in sorted(_ring_canonical_key(list(r.coords), ndigits=ndigits) for r in norm.interiors):
+            key = key + (_RING_SEPARATOR,) + hole_key
 
     _POLY_KEY_CACHE[raw_key] = key
     return key
@@ -626,14 +637,16 @@ def _enumerate_states_for_polygon(
         best_area = -1.0
         diagonal_fallback_area = -1.0
 
+        # The piece cut next is the largest one that is not convex: a piece with a
+        # hole, or one with reflex vertices on its outer ring.
         for idx, candidate in enumerate(pieces):
             if not isinstance(candidate, Polygon) or candidate.is_empty or is_convex_polygon(candidate):
                 continue
-            if candidate.area > diagonal_fallback_area:
+            if not candidate.interiors and candidate.area > diagonal_fallback_area:
                 diagonal_fallback_idx = idx
                 diagonal_fallback_area = candidate.area
             reflexes = find_reflex_vertices_scored(candidate, cfg)
-            if not reflexes:
+            if not reflexes and not candidate.interiors:
                 continue
             if candidate.area > best_area:
                 best_area = candidate.area
@@ -654,6 +667,37 @@ def _enumerate_states_for_polygon(
             existing = children_by_key.get(child_key)
             if existing is None or (existing.fallback_labels and not child.fallback_labels):
                 children_by_key[child_key] = child
+
+        if best_idx is not None and pieces[best_idx].interiors:
+            # Every way of opening the hole with two chords is a child, like any other cut.
+            target_poly = pieces[best_idx]
+            min_area_pruned = False
+            for opening in hole_openings(
+                target_poly,
+                snap_tol=cfg.cut_snap_vertex_tolerance_m,
+                min_part_area=MIN_PART_AREA,
+            ):
+                result.metrics.update(["search_split_attempts"])
+                if any(part.area < cfg.min_area_m2 for part in opening.pieces):
+                    min_area_pruned = True
+                    continue
+                result.metrics.update(["search_successful_splits"])
+                _register_child(best_idx, opening.pieces)
+            if children_by_key:
+                result.children.extend(children_by_key.values())
+                return result
+
+            # No pair of chords opens the hole: every chord reaches another hole first,
+            # or every opening leaves a piece below the minimum area. Split the piece
+            # along its hole edges instead, as before the search knew openings.
+            parts = [part for part in holeless_polygons(target_poly) if part.area > 0.0]
+            if len(parts) >= 2:
+                _register_child(best_idx, parts, fallback_label="hole_edge_split")
+            if children_by_key:
+                result.children.extend(children_by_key.values())
+                return result
+            result.dead_end_counts.update(["min_area_dead_end" if min_area_pruned else "no_reflex_dead_end"])
+            return result
 
         if best_idx is None or not best_reflexes:
             min_area_pruned = False
@@ -845,13 +889,6 @@ def decompose_polygon_with_stats(
             "fallback_used": None,
         })
 
-    # The cuts work on exterior rings only, so a polygon with holes is first cut
-    # into hole-less pieces, and each piece is decomposed on its own.
-    if poly.interiors:
-        pieces = [piece for piece in holeless_polygons(poly) if piece.area > 0.0]
-        results = [decompose_polygon_with_stats(piece, cfg) for piece in pieces]
-        return _with_time(_combine_piece_results(results, cfg))
-
     # Early exit: polygon already convex → treat as one successful variant
     if is_convex_polygon(poly):
         return _with_time({
@@ -962,60 +999,6 @@ def decompose_polygon_with_stats(
         "search_attempt_history": list(search.get("search_attempt_history") or []),
         "fallback_used": best_variant_record.get("fallback_used"),
     })
-
-
-
-_SUMMED_COUNTS = (
-    "n_failed_terminal_states",
-    "n_depth_limit_dead_ends",
-    "n_no_reflex_dead_ends",
-    "n_min_area_dead_ends",
-    "n_states_seen",
-    "search_total_states",
-    "search_split_attempts",
-    "search_successful_splits",
-    "bisector_fallback_attempts",
-    "bisector_fallback_successes",
-    "search_attempt_count",
-)
-
-
-def _combine_piece_results(results: List[Dict[str, Any]], cfg: ConvexDecompositionConfig) -> Dict[str, Any]:
-    """One result for a polygon whose hole-less pieces were decomposed separately.
-
-    The polygon succeeds only if every piece does; its best variant is then the
-    pieces' best variants together. Counters are summed, search budgets take
-    the largest value any piece needed.
-    """
-    success = bool(results) and all(r["convex_success"] for r in results)
-    best_variant = [part for r in results for part in r["best_variant"]] if success else []
-    n_variants = 1
-    for r in results:
-        n_variants *= int(r["n_variants"])
-    reasons = list(dict.fromkeys(
-        str(r["search_terminated_by"]) for r in sorted(results, key=lambda r: r["convex_success"])
-    ))
-    depths = [r["search_depth_used"] for r in results if r.get("search_depth_used") is not None]
-    widths = [r["search_width_used"] for r in results if r.get("search_width_used") is not None]
-    combined: Dict[str, Any] = {
-        "convex_success": success,
-        "n_variants": n_variants if success else 0,
-        "best_variant": best_variant,
-        "fully_convex_best": success,
-        "has_small_zone": any(part.area < cfg.min_area_m2 for part in best_variant),
-        "n_parts": len(best_variant),
-        "search_terminated_by": "+".join(reasons) if reasons else "no_hole_less_pieces",
-        "search_max_depth": max((int(r["search_max_depth"]) for r in results), default=0),
-        "search_max_width": max((int(r["search_max_width"]) for r in results), default=0),
-        "search_depth_used": max(depths) if depths else None,
-        "search_width_used": max(widths) if widths else None,
-        "search_attempt_history": [h for r in results for h in (r.get("search_attempt_history") or [])],
-        "fallback_used": next((r["fallback_used"] for r in results if r.get("fallback_used")), None),
-        "n_hole_less_pieces": len(results),
-    }
-    for key in _SUMMED_COUNTS:
-        combined[key] = int(sum(int(r.get(key, 0) or 0) for r in results))
-    return combined
 
 
 def decompose_polygon_best(poly: Polygon, cfg: ConvexDecompositionConfig) -> List[Polygon]:
