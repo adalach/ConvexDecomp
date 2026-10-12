@@ -92,6 +92,7 @@ ConvexDecomp/
 - `src/convexdecomp/osm/`: OSM normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
+- `tools/`: the search tracer, the search-tree figure (EG-ICE 2026 style) and the search explorer web app, which record and show every state the search makes; see `tools/README.md`.
 - `external/resplan/`: created locally on first ResPlan run as a dataset source clone; not shipped in the public repo zip.
 
 ## Exact Cuts
