@@ -52,6 +52,7 @@ from shapely.geometry.base import BaseGeometry
 from convexdecomp.geometry.cuts import cut_along_diagonal, cut_along_ray, inward_bisector
 from convexdecomp.geometry.holes import holeless_polygons
 from convexdecomp.geometry.openings import hole_openings
+from convexdecomp.core.scores import minimum_width
 from convexdecomp.core.search import (
     AdaptiveSearchConfig,
     DecompositionSearchConfig,
@@ -160,6 +161,15 @@ class ConvexDecompositionConfig:
         instead. When no cut of a piece passes, all of them are allowed for that
         piece (marked with the fallback label "sharp_corner"), so the rule never
         makes a decomposition fail.
+    min_zone_width_m : float
+        Thinnest zone allowed, in metres; 0 turns the rule off. Every convex
+        piece a cut gives is a finished zone and must be at least this wide (its
+        smallest width over all directions). Non-convex pieces are cut further
+        and are not judged. At a reflex vertex where neither carried-on edge
+        passes, the bisector is tried instead. The rule is hard: a footprint
+        that cannot be cut into zones this wide, including a convex one that is
+        itself thinner, gets no decomposition. When no cut of a piece passes
+        the corner rule, only that rule is relaxed.
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
@@ -182,6 +192,7 @@ class ConvexDecompositionConfig:
     beam_ranking: str = "reflex_first"
     bisector_always: bool = False
     min_corner_deg: float = 0.0
+    min_zone_width_m: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -633,6 +644,13 @@ def _sharp(parts: Sequence[Polygon], cfg: "ConvexDecompositionConfig") -> bool:
     return cfg.min_corner_deg > 0.0 and _new_corner_deg(parts) < cfg.min_corner_deg
 
 
+def _thin(parts: Sequence[Polygon], cfg: "ConvexDecompositionConfig") -> bool:
+    """Whether a cut creates a finished (convex) zone thinner than `cfg.min_zone_width_m`."""
+    return cfg.min_zone_width_m > 0.0 and any(
+        is_convex_polygon(part) and minimum_width(part) < cfg.min_zone_width_m for part in parts
+    )
+
+
 def _partition_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
     """The configured score of a list of pieces (lower is better)."""
     if cfg.score_fn is not None:
@@ -739,11 +757,26 @@ def _enumerate_states_for_polygon(
             if existing is None or (existing.fallback_labels and not child.fallback_labels):
                 children_by_key[child_key] = child
 
+        def _register_relaxed(target_idx: int, refused: List[Tuple[List[Polygon], bool, bool]]) -> None:
+            """No cut passed the rules: allow the cuts that break only the corner rule.
+
+            The width rule is never relaxed; if every cut leaves a zone too thin, the
+            state is a dead end.
+            """
+            for parts, sharp, thin in refused:
+                if not thin:
+                    _register_child(target_idx, parts, fallback_label="sharp_corner")
+
+        def _dead_end(min_area_pruned: bool, thin_pruned: bool) -> StateExpansionResult:
+            reason = "thin_zone_dead_end" if thin_pruned else ("min_area_dead_end" if min_area_pruned else "no_reflex_dead_end")
+            result.dead_end_counts.update([reason])
+            return result
+
         if best_idx is not None and pieces[best_idx].interiors:
             # Every way of opening the hole with two chords is a child, like any other cut.
             target_poly = pieces[best_idx]
             min_area_pruned = False
-            sharp_openings: List[List[Polygon]] = []
+            refused_openings: List[Tuple[List[Polygon], bool, bool]] = []
             for opening in hole_openings(
                 target_poly,
                 snap_tol=cfg.cut_snap_vertex_tolerance_m,
@@ -753,33 +786,36 @@ def _enumerate_states_for_polygon(
                 if any(part.area < cfg.min_area_m2 for part in opening.pieces):
                     min_area_pruned = True
                     continue
-                if _sharp(opening.pieces, cfg):
-                    sharp_openings.append(opening.pieces)
+                sharp, thin = _sharp(opening.pieces, cfg), _thin(opening.pieces, cfg)
+                if sharp or thin:
+                    refused_openings.append((list(opening.pieces), sharp, thin))
                     continue
                 result.metrics.update(["search_successful_splits"])
                 _register_child(best_idx, opening.pieces)
             if not children_by_key:
-                # Every opening creates a corner below the limit: allow them all here.
-                for parts in sharp_openings:
-                    _register_child(best_idx, parts, fallback_label="sharp_corner")
+                _register_relaxed(best_idx, refused_openings)
             if children_by_key:
                 result.children.extend(children_by_key.values())
                 return result
+            thin_pruned = any(thin for _, _, thin in refused_openings)
 
             # No pair of chords opens the hole: every chord reaches another hole first,
             # or every opening leaves a piece below the minimum area. Split the piece
             # along its hole edges instead, as before the search knew openings.
             parts = [part for part in holeless_polygons(target_poly) if part.area > 0.0]
             if len(parts) >= 2:
-                _register_child(best_idx, parts, fallback_label="hole_edge_split")
+                if _thin(parts, cfg):
+                    thin_pruned = True
+                else:
+                    _register_child(best_idx, parts, fallback_label="hole_edge_split")
             if children_by_key:
                 result.children.extend(children_by_key.values())
                 return result
-            result.dead_end_counts.update(["min_area_dead_end" if min_area_pruned else "no_reflex_dead_end"])
-            return result
+            return _dead_end(min_area_pruned, thin_pruned)
 
         if best_idx is None or not best_reflexes:
             min_area_pruned = False
+            thin_pruned = False
             if diagonal_fallback_idx is not None:
                 target_poly = pieces[diagonal_fallback_idx]
                 coords = list(target_poly.exterior.coords)[:-1]
@@ -792,6 +828,9 @@ def _enumerate_states_for_polygon(
                             continue
                         if any(part.area < cfg.min_area_m2 for part in parts):
                             min_area_pruned = True
+                            continue
+                        if _thin(parts, cfg):
+                            thin_pruned = True
                             continue
                         all_convex_parts = all(is_convex_polygon(part) for part in parts)
                         score = _partition_score(parts, cfg)
@@ -806,18 +845,18 @@ def _enumerate_states_for_polygon(
                         result.children.extend(children_by_key.values())
                         return result
 
-            result.dead_end_counts.update(["min_area_dead_end" if min_area_pruned else "no_reflex_dead_end"])
-            return result
+            return _dead_end(min_area_pruned, thin_pruned)
 
         target_poly = pieces[best_idx]
         min_area_pruned = False
 
-        sharp_cuts: List[List[Polygon]] = []
+        refused_cuts: List[Tuple[List[Polygon], bool, bool]] = []
+        rules_on = cfg.min_corner_deg > 0.0 or cfg.min_zone_width_m > 0.0
         for vidx, _ in best_reflexes:
             passed_here = 0
             for use_prev in (True, False, None):
-                if use_prev is None and not (cfg.bisector_always or (cfg.min_corner_deg > 0.0 and not passed_here)):
-                    continue  # the bisector: always, or where neither edge passed the corner rule
+                if use_prev is None and not (cfg.bisector_always or (rules_on and not passed_here)):
+                    continue  # the bisector: always, or where neither edge passed the rules
                 result.metrics.update(["search_split_attempts"])
                 if use_prev is None:
                     parts = cut_polygon_at_vertex_bisector(target_poly, vidx, cfg)
@@ -828,9 +867,11 @@ def _enumerate_states_for_polygon(
                 if any(part.area < cfg.min_area_m2 for part in parts):
                     min_area_pruned = True
                     continue
-                if _sharp(parts, cfg):
-                    result.metrics.update(["sharp_corner_refusals"])
-                    sharp_cuts.append(parts)
+                sharp, thin = _sharp(parts, cfg), _thin(parts, cfg)
+                if sharp or thin:
+                    result.metrics.update(["sharp_corner_refusals"] if sharp else [])
+                    result.metrics.update(["thin_zone_refusals"] if thin else [])
+                    refused_cuts.append((list(parts), sharp, thin))
                     continue
 
                 passed_here += 1
@@ -838,13 +879,12 @@ def _enumerate_states_for_polygon(
                 _register_child(best_idx, parts)
 
         if not children_by_key:
-            # Every cut creates a corner below the limit: allow them all for this piece.
-            for parts in sharp_cuts:
-                _register_child(best_idx, parts, fallback_label="sharp_corner")
+            _register_relaxed(best_idx, refused_cuts)
 
         if children_by_key:
             result.children.extend(children_by_key.values())
             return result
+        thin_pruned = any(thin for _, _, thin in refused_cuts)
 
         if cfg.use_bisector_dead_end_fallback:
             result.metrics.update(["bisector_fallback_attempts"])
@@ -856,6 +896,9 @@ def _enumerate_states_for_polygon(
                 if any(part.area < cfg.min_area_m2 for part in parts):
                     min_area_pruned = True
                     continue
+                if _thin(parts, cfg):
+                    thin_pruned = True
+                    continue
 
                 _register_child(best_idx, parts, fallback_label="bisector_dead_end")
             if len(children_by_key) > bisector_child_count_before:
@@ -865,8 +908,7 @@ def _enumerate_states_for_polygon(
             result.children.extend(children_by_key.values())
             return result
 
-        result.dead_end_counts.update(["min_area_dead_end" if min_area_pruned else "no_reflex_dead_end"])
-        return result
+        return _dead_end(min_area_pruned, thin_pruned)
 
     search = run_polygon_state_search(
         [root],
@@ -973,6 +1015,37 @@ def decompose_polygon_with_stats(
             "n_min_area_dead_ends": 0,
             "n_states_seen": 0,
             "search_total_states": 0,
+            "search_max_depth": 0,
+            "search_max_width": 0,
+            "search_split_attempts": 0,
+            "search_successful_splits": 0,
+            "bisector_fallback_attempts": 0,
+            "bisector_fallback_successes": 0,
+            "search_depth_used": None,
+            "search_width_used": None,
+            "search_attempt_count": 0,
+            "search_attempt_history": [],
+            "fallback_used": None,
+        })
+
+    # A polygon that is convex, or becomes convex once straight vertices are dropped, is
+    # itself one zone; thinner than the zone width limit, it is a zone too thin.
+    if cfg.min_zone_width_m > 0.0 and (is_convex_polygon(poly) or is_convex_polygon(normalize_polygon(poly))) \
+            and minimum_width(poly) < cfg.min_zone_width_m:
+        return _with_time({
+            "convex_success": False,
+            "n_variants": 0,
+            "best_variant": [],
+            "fully_convex_best": False,
+            "has_small_zone": False,
+            "n_parts": 0,
+            "search_terminated_by": "thinner_than_min_zone_width",
+            "n_failed_terminal_states": 0,
+            "n_depth_limit_dead_ends": 0,
+            "n_no_reflex_dead_ends": 0,
+            "n_min_area_dead_ends": 0,
+            "n_states_seen": 1,
+            "search_total_states": 1,
             "search_max_depth": 0,
             "search_max_width": 0,
             "search_split_attempts": 0,

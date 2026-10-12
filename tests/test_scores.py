@@ -107,6 +107,31 @@ def test_min_corner_rule_never_makes_a_decomposition_fail():
         assert decompose_polygon_with_stats(poly, ConvexDecompositionConfig(min_corner_deg=30.0))["convex_success"]
 
 
+def test_min_zone_width_refuses_thin_zones():
+    # Today the bent band is cut along an edge, leaving a 1.4 m sliver.
+    plain = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig())["best_variant"]
+    wide = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig(min_zone_width_m=2.0))
+    assert min(minimum_width(p) for p in plain) < 2.0
+    assert wide["convex_success"] and not wide["fallback_used"]
+    assert min(minimum_width(p) for p in wide["best_variant"]) >= 2.0
+    assert math.isclose(sum(p.area for p in wide["best_variant"]), BENT_BAND.area, rel_tol=1e-9)
+
+
+def test_min_zone_width_is_a_hard_rule():
+    # A footprint thinner than the limit gets no decomposition: no thin zone enters the result.
+    thin_l = Polygon([(0, 0), (20, 0), (20, 1.5), (1.5, 1.5), (1.5, 20), (0, 20)])
+    assert decompose_polygon_with_stats(thin_l, ConvexDecompositionConfig())["convex_success"]
+    result = decompose_polygon_with_stats(thin_l, ConvexDecompositionConfig(min_zone_width_m=3.0))
+    assert not result["convex_success"] and result["best_variant"] == []
+    strip = box(0, 0, 20, 1.5)
+    result = decompose_polygon_with_stats(strip, ConvexDecompositionConfig(min_zone_width_m=2.0))
+    assert not result["convex_success"]
+    assert result["search_terminated_by"] == "thinner_than_min_zone_width"
+    # The same strip with a vertex a hair off the straight line, so it is not strictly convex.
+    almost = Polygon([(0, 0), (10, 0), (20, 1e-9), (20, 1.5), (0, 1.5)])
+    assert not decompose_polygon_with_stats(almost, ConvexDecompositionConfig(min_zone_width_m=2.0))["convex_success"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
