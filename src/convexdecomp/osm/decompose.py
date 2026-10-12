@@ -45,6 +45,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import shapely
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
 
@@ -151,6 +152,14 @@ class ConvexDecompositionConfig:
         vertex, next to the two carried-on edges. Otherwise the bisector is only
         tried where neither edge gives a cut. At a shallow bend both edges run
         almost along the piece and leave slivers, while the bisector cuts across.
+    min_corner_deg : float
+        Smallest corner a cut may create, in degrees; 0 turns the rule off. A cut
+        creates corners only at its two ends (for a hole opening, at the ends of
+        both chords), so the polygon's own sharp corners never block a cut. At a
+        reflex vertex where neither carried-on edge passes, the bisector is tried
+        instead. When no cut of a piece passes, all of them are allowed for that
+        piece (marked with the fallback label "sharp_corner"), so the rule never
+        makes a decomposition fail.
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
@@ -172,6 +181,7 @@ class ConvexDecompositionConfig:
     score_fn: Optional[Callable[[Sequence[Polygon]], float]] = None
     beam_ranking: str = "reflex_first"
     bisector_always: bool = False
+    min_corner_deg: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -585,6 +595,44 @@ def _score_polys(
     )
 
 
+def _new_corner_deg(parts: Sequence[Polygon]) -> float:
+    """The smallest corner, in degrees, that a cut gave its pieces.
+
+    The pieces of one cut touch only along the cut (or both chords of a hole
+    opening), so a piece's corners the cut created are its vertices lying on
+    another piece's boundary. A vertex is there even where the cut leaves the
+    other piece straight, which drops the point from that piece's ring.
+    """
+    smallest = 180.0
+    for i, part in enumerate(parts):
+        coords = list(part.exterior.coords)[:-1]
+        minx, miny, maxx, maxy = part.bounds
+        eps = 1e-9 * max(maxx - minx, maxy - miny, 1.0)
+        points = shapely.points(coords)
+        on_cut = [False] * len(coords)
+        for j, other in enumerate(parts):
+            if j != i:
+                near = shapely.distance(other.boundary, points) <= eps
+                on_cut = [a or bool(b) for a, b in zip(on_cut, near)]
+        ccw = part.exterior.is_ccw
+        n = len(coords)
+        for k, hit in enumerate(on_cut):
+            if not hit:
+                continue
+            (ax, ay), (bx, by), (cx, cy) = coords[k - 1], coords[k], coords[(k + 1) % n]
+            ux, uy, wx, wy = cx - bx, cy - by, ax - bx, ay - by
+            angle = math.degrees(math.atan2(ux * wy - uy * wx, ux * wx + uy * wy)) % 360.0
+            if not ccw:
+                angle = (360.0 - angle) % 360.0
+            smallest = min(smallest, angle)
+    return smallest
+
+
+def _sharp(parts: Sequence[Polygon], cfg: "ConvexDecompositionConfig") -> bool:
+    """Whether a cut creates a corner smaller than `cfg.min_corner_deg`."""
+    return cfg.min_corner_deg > 0.0 and _new_corner_deg(parts) < cfg.min_corner_deg
+
+
 def _partition_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
     """The configured score of a list of pieces (lower is better)."""
     if cfg.score_fn is not None:
@@ -695,6 +743,7 @@ def _enumerate_states_for_polygon(
             # Every way of opening the hole with two chords is a child, like any other cut.
             target_poly = pieces[best_idx]
             min_area_pruned = False
+            sharp_openings: List[List[Polygon]] = []
             for opening in hole_openings(
                 target_poly,
                 snap_tol=cfg.cut_snap_vertex_tolerance_m,
@@ -704,8 +753,15 @@ def _enumerate_states_for_polygon(
                 if any(part.area < cfg.min_area_m2 for part in opening.pieces):
                     min_area_pruned = True
                     continue
+                if _sharp(opening.pieces, cfg):
+                    sharp_openings.append(opening.pieces)
+                    continue
                 result.metrics.update(["search_successful_splits"])
                 _register_child(best_idx, opening.pieces)
+            if not children_by_key:
+                # Every opening creates a corner below the limit: allow them all here.
+                for parts in sharp_openings:
+                    _register_child(best_idx, parts, fallback_label="sharp_corner")
             if children_by_key:
                 result.children.extend(children_by_key.values())
                 return result
@@ -756,8 +812,12 @@ def _enumerate_states_for_polygon(
         target_poly = pieces[best_idx]
         min_area_pruned = False
 
+        sharp_cuts: List[List[Polygon]] = []
         for vidx, _ in best_reflexes:
-            for use_prev in (True, False, None) if cfg.bisector_always else (True, False):
+            passed_here = 0
+            for use_prev in (True, False, None):
+                if use_prev is None and not (cfg.bisector_always or (cfg.min_corner_deg > 0.0 and not passed_here)):
+                    continue  # the bisector: always, or where neither edge passed the corner rule
                 result.metrics.update(["search_split_attempts"])
                 if use_prev is None:
                     parts = cut_polygon_at_vertex_bisector(target_poly, vidx, cfg)
@@ -768,9 +828,19 @@ def _enumerate_states_for_polygon(
                 if any(part.area < cfg.min_area_m2 for part in parts):
                     min_area_pruned = True
                     continue
+                if _sharp(parts, cfg):
+                    result.metrics.update(["sharp_corner_refusals"])
+                    sharp_cuts.append(parts)
+                    continue
 
+                passed_here += 1
                 result.metrics.update(["search_successful_splits"])
                 _register_child(best_idx, parts)
+
+        if not children_by_key:
+            # Every cut creates a corner below the limit: allow them all for this piece.
+            for parts in sharp_cuts:
+                _register_child(best_idx, parts, fallback_label="sharp_corner")
 
         if children_by_key:
             result.children.extend(children_by_key.values())

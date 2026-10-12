@@ -80,6 +80,33 @@ def test_bisector_always_cuts_a_shallow_bend_across():
     assert min(minimum_width(p) for p in bis) > min(minimum_width(p) for p in plain)
 
 
+def test_new_corner_angles():
+    from convexdecomp.osm.decompose import (
+        _new_corner_deg, cut_polygon_at_vertex, cut_polygon_at_vertex_bisector, find_reflex_vertices_scored)
+    cfg = ConvexDecompositionConfig()
+    (bend, _), = find_reflex_vertices_scored(BENT_BAND, cfg)
+    # Carrying either edge on at the 4 degree bend leaves a 4 degree corner; the bisector two near-right ones.
+    for use_prev in (True, False):
+        assert _new_corner_deg(cut_polygon_at_vertex(BENT_BAND, bend, cfg, use_prev=use_prev)) < 5
+    assert _new_corner_deg(cut_polygon_at_vertex_bisector(BENT_BAND, bend, cfg)) > 85
+
+
+def test_min_corner_rule_cuts_a_shallow_bend_across():
+    parts = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig(min_corner_deg=15.0))["best_variant"]
+    assert len(parts) == 2
+    assert min(minimum_width(p) for p in parts) > 4.0
+    assert math.isclose(sum(p.area for p in parts), BENT_BAND.area, rel_tol=1e-9)
+
+
+def test_min_corner_rule_never_makes_a_decomposition_fail():
+    # At 91 degrees every cut of an L shape creates a sharper corner; the rule is relaxed.
+    result = decompose_polygon_with_stats(L_SHAPE, ConvexDecompositionConfig(min_corner_deg=91.0))
+    assert result["convex_success"]
+    assert "sharp_corner" in (result["fallback_used"] or "")
+    for poly in (COURTYARD, BENT_BAND):
+        assert decompose_polygon_with_stats(poly, ConvexDecompositionConfig(min_corner_deg=30.0))["convex_success"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
