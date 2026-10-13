@@ -52,7 +52,7 @@ from shapely.geometry.base import BaseGeometry
 from convexdecomp.geometry.cuts import cut_along_diagonal, cut_along_ray, inward_bisector
 from convexdecomp.geometry.holes import holeless_polygons
 from convexdecomp.geometry.openings import hole_openings
-from convexdecomp.core.scores import minimum_width
+from convexdecomp.core.scores import PartitionScore, minimum_width
 from convexdecomp.core.search import (
     AdaptiveSearchConfig,
     DecompositionSearchConfig,
@@ -102,6 +102,15 @@ class ConvexDecompositionConfig:
     """
     Parameters controlling the convex decomposition search.
 
+    The defaults: every zone counts the same in the score that chooses the
+    variant (zones + 20 x (1 - mean compactness)), the beam ranks states by the
+    same score with the mean weighted by area, every reflex
+    vertex offers the bisector next to its two carried-on edges, no cut may
+    create a corner under 30 degrees (relaxed only where no cut passes), and no
+    zone may be thinner than 2 m (a hard rule: such a polygon gets no
+    decomposition). ``ConvexDecompositionConfig(**PAPER_2026_SEARCH)`` searches
+    as in the EG-ICE 2026 paper.
+
     Attributes
     ----------
     search_depth : int
@@ -126,6 +135,17 @@ class ConvexDecompositionConfig:
         Weight for penalising many parts in the scoring function.
     weight_compactness : float
         Weight for rewarding compact shapes in the scoring function.
+    area_weighting : float
+        Exponent of each zone's area in the mean compactness of the score that
+        chooses the final variant: 0 lets every zone count the same (the
+        default), 1 weights a zone by its area, as the EG-ICE 2026 paper did,
+        so that a small or thin zone hardly counts.
+    beam_area_weighting : float
+        The same exponent for the score that ranks the states while the search
+        runs (default 1). An unfinished state still holds large non-convex
+        pieces; counted like the finished zones, a state that has cut one neat
+        block off a big remainder looks worse than it is, and the beam drops
+        the path to the better result.
     min_concavity_deg : float
         Minimum concavity (in degrees) for a vertex to be treated as a
         meaningful reflex. Smaller concavities are considered "almost straight".
@@ -182,6 +202,8 @@ class ConvexDecompositionConfig:
     min_area_m2: float = 2.0
     weight_parts: float = 1.0
     weight_compactness: float = 20.0
+    area_weighting: float = 0.0
+    beam_area_weighting: float = 1.0
     min_concavity_deg: float = 2.0
     max_reflex_per_node: Optional[int] = None
     track_time: bool = False
@@ -189,10 +211,10 @@ class ConvexDecompositionConfig:
     cut_snap_vertex_tolerance_m: float = 0.1
     adaptive_search: AdaptiveSearchConfig = field(default_factory=_default_osm_adaptive_search)
     score_fn: Optional[Callable[[Sequence[Polygon]], float]] = None
-    beam_ranking: str = "reflex_first"
-    bisector_always: bool = False
-    min_corner_deg: float = 0.0
-    min_zone_width_m: float = 0.0
+    beam_ranking: str = "score_first"
+    bisector_always: bool = True
+    min_corner_deg: float = 30.0
+    min_zone_width_m: float = 2.0
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -652,10 +674,39 @@ def _thin(parts: Sequence[Polygon], cfg: "ConvexDecompositionConfig") -> bool:
 
 
 def _partition_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
-    """The configured score of a list of pieces (lower is better)."""
+    """The configured score of a list of pieces (lower is better).
+
+    Without a `score_fn`: zones x weight_parts + weight_compactness x (1 - mean
+    Polsby-Popper compactness), the mean weighted by area ** area_weighting.
+    """
     if cfg.score_fn is not None:
         return float(cfg.score_fn(list(polys)))
-    return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
+    if cfg.area_weighting == 1.0:
+        return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
+    return PartitionScore(weight_parts=cfg.weight_parts, weight_compactness=cfg.weight_compactness,
+                          area_weighting=cfg.area_weighting)(list(polys))
+
+
+def _beam_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
+    """The score that ranks states while the search runs (lower is better)."""
+    if cfg.score_fn is not None:
+        return float(cfg.score_fn(list(polys)))
+    if cfg.beam_area_weighting == 1.0:
+        return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
+    return PartitionScore(weight_parts=cfg.weight_parts, weight_compactness=cfg.weight_compactness,
+                          area_weighting=cfg.beam_area_weighting)(list(polys))
+
+
+#: The search as in the EG-ICE 2026 paper (apart from the exact cuts and the hole openings):
+#: ``ConvexDecompositionConfig(**PAPER_2026_SEARCH)``.
+PAPER_2026_SEARCH: Dict[str, Any] = {
+    "area_weighting": 1.0,
+    "beam_area_weighting": 1.0,
+    "beam_ranking": "reflex_first",
+    "bisector_always": False,
+    "min_corner_deg": 0.0,
+    "min_zone_width_m": 0.0,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +884,7 @@ def _enumerate_states_for_polygon(
                             thin_pruned = True
                             continue
                         all_convex_parts = all(is_convex_polygon(part) for part in parts)
-                        score = _partition_score(parts, cfg)
+                        score = _beam_score(parts, cfg)
                         diagonal_candidates.append((all_convex_parts, score, parts))
 
                 if diagonal_candidates:
@@ -922,7 +973,7 @@ def _enumerate_states_for_polygon(
         expand_state_fn=_expand_state,
         adaptive_cfg=cfg.adaptive_search,
         default_width=cfg.search_width,
-        state_score_fn=lambda pieces: _partition_score(pieces, cfg),
+        state_score_fn=lambda pieces: _beam_score(pieces, cfg),
         min_piece_area=cfg.min_area_m2,
         ranking=cfg.beam_ranking,
     )

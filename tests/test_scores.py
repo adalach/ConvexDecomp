@@ -16,7 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from convexdecomp.core.scores import PartitionScore, minimum_width, zone_metrics
 from convexdecomp.core.search import score_polygon_partition
-from convexdecomp.osm.decompose import ConvexDecompositionConfig, decompose_polygon_with_stats
+from convexdecomp.osm.decompose import PAPER_2026_SEARCH, ConvexDecompositionConfig, decompose_polygon_with_stats
+
+# The search of the EG-ICE 2026 paper: none of the newer rules, area-weighted score.
+PAPER = ConvexDecompositionConfig(**PAPER_2026_SEARCH)
 
 L_SHAPE = Polygon([(0, 0), (10, 0), (10, 4), (4, 4), (4, 10), (0, 10)])
 COURTYARD = Polygon([(0, 0), (20, 0), (20, 14), (0, 14)], [[(5, 4), (15, 4), (15, 10), (5, 10)]])
@@ -61,9 +64,9 @@ def test_custom_score_and_ranking_keep_the_area():
             assert math.isclose(sum(p.area for p in result["best_variant"]), poly.area, rel_tol=1e-9)
 
 
-def test_default_config_is_unchanged():
-    a = decompose_polygon_with_stats(COURTYARD, ConvexDecompositionConfig())
-    b = decompose_polygon_with_stats(COURTYARD, ConvexDecompositionConfig(score_fn=PartitionScore()))
+def test_paper_settings_with_the_score_object_give_the_same_result():
+    a = decompose_polygon_with_stats(COURTYARD, PAPER)
+    b = decompose_polygon_with_stats(COURTYARD, replace(PAPER, score_fn=PartitionScore()))
     assert sorted(round(p.area, 9) for p in a["best_variant"]) == sorted(round(p.area, 9) for p in b["best_variant"])
 
 
@@ -73,8 +76,8 @@ BENT_BAND = Polygon([(0, 0), (20, 0), (40, 1.4), (40, 5.9), (19.84, 4.49), (0, 4
 
 
 def test_bisector_always_cuts_a_shallow_bend_across():
-    plain = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig())["best_variant"]
-    bis = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig(bisector_always=True))["best_variant"]
+    plain = decompose_polygon_with_stats(BENT_BAND, PAPER)["best_variant"]
+    bis = decompose_polygon_with_stats(BENT_BAND, replace(PAPER, bisector_always=True))["best_variant"]
     assert math.isclose(sum(p.area for p in bis), BENT_BAND.area, rel_tol=1e-9)
     assert len(bis) == 2
     assert min(minimum_width(p) for p in bis) > min(minimum_width(p) for p in plain)
@@ -92,7 +95,7 @@ def test_new_corner_angles():
 
 
 def test_min_corner_rule_cuts_a_shallow_bend_across():
-    parts = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig(min_corner_deg=15.0))["best_variant"]
+    parts = decompose_polygon_with_stats(BENT_BAND, replace(PAPER, min_corner_deg=15.0))["best_variant"]
     assert len(parts) == 2
     assert min(minimum_width(p) for p in parts) > 4.0
     assert math.isclose(sum(p.area for p in parts), BENT_BAND.area, rel_tol=1e-9)
@@ -100,17 +103,17 @@ def test_min_corner_rule_cuts_a_shallow_bend_across():
 
 def test_min_corner_rule_never_makes_a_decomposition_fail():
     # At 91 degrees every cut of an L shape creates a sharper corner; the rule is relaxed.
-    result = decompose_polygon_with_stats(L_SHAPE, ConvexDecompositionConfig(min_corner_deg=91.0))
+    result = decompose_polygon_with_stats(L_SHAPE, replace(PAPER, min_corner_deg=91.0))
     assert result["convex_success"]
     assert "sharp_corner" in (result["fallback_used"] or "")
     for poly in (COURTYARD, BENT_BAND):
-        assert decompose_polygon_with_stats(poly, ConvexDecompositionConfig(min_corner_deg=30.0))["convex_success"]
+        assert decompose_polygon_with_stats(poly, replace(PAPER, min_corner_deg=30.0))["convex_success"]
 
 
 def test_min_zone_width_refuses_thin_zones():
     # Today the bent band is cut along an edge, leaving a 1.4 m sliver.
-    plain = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig())["best_variant"]
-    wide = decompose_polygon_with_stats(BENT_BAND, ConvexDecompositionConfig(min_zone_width_m=2.0))
+    plain = decompose_polygon_with_stats(BENT_BAND, PAPER)["best_variant"]
+    wide = decompose_polygon_with_stats(BENT_BAND, replace(PAPER, min_zone_width_m=2.0))
     assert min(minimum_width(p) for p in plain) < 2.0
     assert wide["convex_success"] and not wide["fallback_used"]
     assert min(minimum_width(p) for p in wide["best_variant"]) >= 2.0
@@ -120,7 +123,7 @@ def test_min_zone_width_refuses_thin_zones():
 def test_min_zone_width_is_a_hard_rule():
     # A footprint thinner than the limit gets no decomposition: no thin zone enters the result.
     thin_l = Polygon([(0, 0), (20, 0), (20, 1.5), (1.5, 1.5), (1.5, 20), (0, 20)])
-    assert decompose_polygon_with_stats(thin_l, ConvexDecompositionConfig())["convex_success"]
+    assert decompose_polygon_with_stats(thin_l, PAPER)["convex_success"]
     result = decompose_polygon_with_stats(thin_l, ConvexDecompositionConfig(min_zone_width_m=3.0))
     assert not result["convex_success"] and result["best_variant"] == []
     strip = box(0, 0, 20, 1.5)
@@ -130,6 +133,18 @@ def test_min_zone_width_is_a_hard_rule():
     # The same strip with a vertex a hair off the straight line, so it is not strictly convex.
     almost = Polygon([(0, 0), (10, 0), (20, 1e-9), (20, 1.5), (0, 1.5)])
     assert not decompose_polygon_with_stats(almost, ConvexDecompositionConfig(min_zone_width_m=2.0))["convex_success"]
+
+
+
+def test_the_defaults_are_the_decided_settings():
+    cfg = ConvexDecompositionConfig()
+    assert (cfg.area_weighting, cfg.beam_area_weighting, cfg.beam_ranking, cfg.bisector_always,
+            cfg.min_corner_deg, cfg.min_zone_width_m) == (0.0, 1.0, "score_first", True, 30.0, 2.0)
+    # An L shape becomes two rectangles; a courtyard building four.
+    from test_openings import ROTATED
+    for poly, n in ((L_SHAPE, 2), (ROTATED, 4)):
+        parts = decompose_polygon_with_stats(poly, cfg)["best_variant"]
+        assert len(parts) == n and all(math.isclose(zone_metrics(p).rectangularity, 1.0) for p in parts)
 
 
 if __name__ == "__main__":
