@@ -91,7 +91,8 @@ def test_explorer_run_returns_a_tree_whose_successes_cover_the_polygon():
     module.EXAMPLES["test_courtyard"] = {"id": "test_courtyard", "label": "courtyard",
                                          "polygon": module._rings(COURTYARD), "references": []}
     engine = client.get("/api/engine").json()
-    assert set(engine["options"]) == {"bisector_always", "min_corner_deg"}
+    assert set(engine["options"]) == {"bisector_always", "min_corner_deg", "min_zone_width_m", "beam_area_weighting"}
+    assert all(engine["options"].values())
 
     reply = client.post("/api/run", json={"example": "test_courtyard", "search": {"bisector_always": True}})
     assert reply.status_code == 200, reply.text

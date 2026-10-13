@@ -39,7 +39,7 @@ from convexdecomp.core.scores import PartitionScore, zone_metrics  # noqa: E402
 EXAMPLES_FILE = T.REPO_ROOT / "data" / "bem4ai" / "explorer_examples.json"
 BUILT_IN_EXAMPLE = HERE / "paper_example.wkt"
 # Engine settings the page offers that an older engine may not have yet.
-OPTIONAL_SETTINGS = ("bisector_always", "min_corner_deg")
+OPTIONAL_SETTINGS = ("bisector_always", "min_corner_deg", "min_zone_width_m", "beam_area_weighting")
 
 
 def _rings(poly: Polygon) -> Dict[str, Any]:
@@ -71,7 +71,7 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 class ScoreParams(BaseModel):
     weight_compactness: float = Field(20.0, ge=0)
-    area_weighting: float = Field(1.0, ge=0, le=1)
+    area_weighting: float = Field(0.0, ge=0, le=1)
     weight_rectangularity: float = Field(0.0, ge=0)
     weight_narrow: float = Field(0.0, ge=0)
     narrow_width_m: float = Field(2.0, gt=0)
@@ -80,7 +80,7 @@ class ScoreParams(BaseModel):
 
 
 class SearchParams(BaseModel):
-    ranking: Literal["reflex_first", "score_first"] = "reflex_first"
+    ranking: Literal["reflex_first", "score_first"] = "score_first"
     depth: int = Field(24, ge=1, le=60)
     width: int = Field(4, ge=1, le=32)
     max_reflex: int = Field(8, ge=1, le=64)
@@ -89,8 +89,10 @@ class SearchParams(BaseModel):
     min_area_m2: float = Field(2.0, ge=0.1)
     snap_m: float = Field(0.1, ge=0)
     adaptive: bool = True
-    bisector_always: bool = False
-    min_corner_deg: float = Field(0.0, ge=0, le=45)
+    bisector_always: bool = True
+    min_corner_deg: float = Field(30.0, ge=0, le=45)
+    min_zone_width_m: float = Field(2.0, ge=0, le=10)
+    beam_area_weighting: float = Field(1.0, ge=0, le=1)
 
 
 class RunRequest(BaseModel):
@@ -133,11 +135,18 @@ def config(search: SearchParams, score: PartitionScore) -> Any:
         adaptive_search=T.ENGINE.adaptive_config(
             enabled=s.adaptive, initial_depth=min(4, s.depth), initial_width=min(3, s.width),
             max_depth=s.depth, max_width=s.width, depth_step=1, width_step=1),
-        score_fn=score, beam_ranking=s.ranking,
+        beam_ranking=s.ranking,
     )
     for option in OPTIONAL_SETTINGS:
         if T.ENGINE.supports(option):
             settings[option] = getattr(s, option)
+    # The engine's own score unless an extra term is on: its score chooses the variant with
+    # area_weighting and guides the beam with beam_area_weighting. A score_fn replaces both.
+    extra = score.weight_rectangularity or score.weight_narrow or score.weight_small
+    if extra or not T.ENGINE.supports("area_weighting"):
+        settings["score_fn"] = score
+    else:
+        settings["area_weighting"] = score.area_weighting
     return T.ENGINE.decomposer.ConvexDecompositionConfig(**settings)
 
 

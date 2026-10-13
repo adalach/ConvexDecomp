@@ -3,7 +3,7 @@
 const SCORE_CONTROLS = [
   { key: "weight_compactness", label: "Compactness weight w_C", min: 0, max: 60, step: 1, value: 20,
     help: "Weight of (1 − mean Polsby-Popper compactness). A square scores 0.785, a regular pentagon 0.865." },
-  { key: "area_weighting", label: "Area weighting", min: 0, max: 1, step: 0.05, value: 1,
+  { key: "area_weighting", label: "Area weighting", min: 0, max: 1, step: 0.05, value: 0,
     help: "How much a zone's area counts in the means: 1 = by area (as now, small zones hardly count), 0 = every zone the same." },
   { key: "weight_rectangularity", label: "Rectangularity weight w_R", min: 0, max: 40, step: 1, value: 0,
     help: "Weight of (1 − mean area / enclosing-rectangle area). Adds to compactness, so long rectangles still lose." },
@@ -16,13 +16,17 @@ const SCORE_CONTROLS = [
 ];
 
 const SEARCH_CONTROLS = [
-  { key: "ranking", label: "Beam ranking", type: "select", value: "reflex_first",
+  { key: "ranking", label: "Beam ranking", type: "select", value: "score_first",
     options: [["reflex_first", "reflex vertices first (as now)"], ["score_first", "score first"]],
     help: "What decides which states the beam keeps: fewest non-convex pieces and reflex vertices, with the score only breaking ties; or the score itself." },
-  { key: "bisector_always", label: "Mid-angle cut at every reflex vertex", type: "toggle", value: false,
+  { key: "bisector_always", label: "Mid-angle cut at every reflex vertex", type: "toggle", value: true,
     help: "Offer the bisector of the corner as a third cut next to the two carried-on edges. Off: only where neither edge cut works." },
-  { key: "min_corner_deg", label: "Smallest corner a cut may create (°)", min: 0, max: 45, step: 1, value: 0,
+  { key: "min_corner_deg", label: "Smallest corner a cut may create (°)", min: 0, max: 45, step: 1, value: 30,
     help: "0 = off. A cut whose ends would leave a corner sharper than this is refused; the polygon's own sharp corners never block a cut." },
+  { key: "min_zone_width_m", label: "Thinnest zone allowed (m)", min: 0, max: 6, step: 0.1, value: 2,
+    help: "Hard rule: a cut that leaves a convex zone thinner than this is refused, never relaxed. 0 = off." },
+  { key: "beam_area_weighting", label: "Area weighting of the beam's score", min: 0, max: 1, step: 0.05, value: 1,
+    help: "The score that ranks unfinished states. 1 = by area: big non-convex remainders count fully, so the beam does not drop a neat cut too early. The variant is chosen with the score's own area weighting." },
   { key: "width", label: "Beam width", min: 1, max: 16, step: 1, value: 4, help: "States kept per step." },
   { key: "depth", label: "Depth (cuts)", min: 2, max: 40, step: 1, value: 24 },
   { key: "max_reflex", label: "Reflex vertices tried per piece", min: 1, max: 24, step: 1, value: 8,
@@ -44,15 +48,13 @@ const VIEW_CONTROLS = [
 ];
 
 const SCORE_PRESETS = [
-  ["Engine today", {}],
-  ["Equal zones", { area_weighting: 0 }],
-  ["Equal + narrow 2 m", { area_weighting: 0, weight_narrow: 5, narrow_width_m: 2 }],
-  ["Equal + rectangles", { area_weighting: 0, weight_rectangularity: 10 }],
+  ["Decided (default)", {}],
+  ["Paper 2026", { area_weighting: 1 }],
+  ["+ rectangles 5", { weight_rectangularity: 5 }],
 ];
 const SEARCH_PRESETS = [
-  ["Notebook", {}],
-  ["Score first", { ranking: "score_first" }],
-  ["Score first + mid-angle", { ranking: "score_first", bisector_always: true }],
+  ["Decided (default)", {}],
+  ["Paper 2026", { ranking: "reflex_first", bisector_always: false, min_corner_deg: 0, min_zone_width_m: 0 }],
   ["Wide", { width: 8, max_reflex: 16, max_variants: 64 }],
 ];
 
