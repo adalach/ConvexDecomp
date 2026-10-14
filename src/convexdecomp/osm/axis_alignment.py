@@ -109,6 +109,31 @@ def _intersect_lines(n1: np.ndarray, r1: float, n2: np.ndarray, r2: float):
     return True, np.linalg.solve(A, b)
 
 
+def _oriented_normal_sum(members: List[Dict], cfg: EdgeAlignmentConfig) -> np.ndarray:
+    """The length-weighted sum of the members' normals, each turned to agree with the longest member's.
+
+    A line's normal can point either way: the two edges of one north-south wall whose directions
+    fall either side of 0/180 degrees get opposite normals. Summed as they are, such normals cancel
+    and point along the wall; turned to one side first, they add up.
+    """
+    reference = np.asarray(max(members, key=lambda member: float(member["length"]))["n"], dtype=float)
+    total = np.zeros(2, dtype=float)
+    for member in members:
+        normal = np.asarray(member["n"], dtype=float)
+        weight = max(float(member["length"]), cfg.min_edge_len_m)
+        total += (normal if float(np.dot(normal, reference)) >= 0.0 else -normal) * weight
+    return total
+
+
+def _edge_midpoint(edge: Dict) -> np.ndarray:
+    return 0.5 * (np.asarray(edge["p"], dtype=float) + np.asarray(edge["q"], dtype=float))
+
+
+def _distance_to_line(point: np.ndarray, line: Dict) -> float:
+    """How far a point lies from a line given by its unit normal ``n`` and offset ``rho``."""
+    return abs(float(np.dot(np.asarray(line["n"], dtype=float), point)) - float(line["rho"]))
+
+
 def _cluster_edges(edges: List[Dict], cfg: EdgeAlignmentConfig) -> List[Dict]:
     angle_tol = math.radians(cfg.line_angle_tol_deg)
     clusters: List[Dict] = []
@@ -117,9 +142,7 @@ def _cluster_edges(edges: List[Dict], cfg: EdgeAlignmentConfig) -> List[Dict]:
         weights = [max(float(member["length"]), cfg.min_edge_len_m) for member in members]
         total_weight = float(sum(weights))
 
-        normal_sum = np.zeros(2, dtype=float)
-        for member, weight in zip(members, weights):
-            normal_sum += np.asarray(member["n"], dtype=float) * weight
+        normal_sum = _oriented_normal_sum(members, cfg)
 
         normal_norm = float(np.linalg.norm(normal_sum))
         if normal_norm <= 1e-12:
@@ -166,25 +189,18 @@ def _cluster_edges(edges: List[Dict], cfg: EdgeAlignmentConfig) -> List[Dict]:
             cluster["family_alpha"] = None
         return cluster
 
+    # An edge joins the first line within the angle and offset tolerances; the line is refitted to
+    # its members each time, so its direction is a proper mean also across 0/180 degrees.
     for edge in edges:
-        alpha, rho = edge["alpha"], edge["rho"]
-        weight = max(edge["length"], cfg.min_edge_len_m)
         placed = False
-
-        for cluster in clusters:
-            if _angle_diff(alpha, cluster["alpha"]) <= angle_tol and abs(rho - cluster["rho"]) <= cfg.line_offset_tol_m:
-                total_weight = cluster["weight"] + weight
-                cluster["alpha"] = (cluster["alpha"] * cluster["weight"] + alpha * weight) / total_weight
-                cluster["rho"] = (cluster["rho"] * cluster["weight"] + rho * weight) / total_weight
-                cluster["weight"] = total_weight
-                cluster["members"].append(edge)
+        for position, cluster in enumerate(clusters):
+            if (_angle_diff(edge["alpha"], cluster["alpha"]) <= angle_tol
+                    and _distance_to_line(_edge_midpoint(edge), cluster) <= cfg.line_offset_tol_m):
+                clusters[position] = _rebuild_cluster([*cluster["members"], edge])
                 placed = True
                 break
-
         if not placed:
-            clusters.append({"alpha": alpha, "rho": rho, "weight": weight, "members": [edge]})
-
-    clusters = [_rebuild_cluster(cluster["members"]) for cluster in clusters]
+            clusters.append(_rebuild_cluster([edge]))
 
     def _cluster_total_length(cluster: Dict) -> float:
         return float(sum(float(member["length"]) for member in cluster["members"]))
@@ -221,7 +237,7 @@ def _cluster_edges(edges: List[Dict], cfg: EdgeAlignmentConfig) -> List[Dict]:
             if target is cluster:
                 continue
             angle_delta = _angle_diff(cluster["alpha"], target["alpha"])
-            offset_delta = abs(cluster["rho"] - target["rho"])
+            offset_delta = max(_distance_to_line(_edge_midpoint(member), target) for member in cluster["members"])
             if angle_delta > angle_reassign_tol or offset_delta > cfg.small_cluster_reassign_offset_tol_m:
                 continue
             cost = (angle_delta, offset_delta)
@@ -243,9 +259,7 @@ def _cluster_edges(edges: List[Dict], cfg: EdgeAlignmentConfig) -> List[Dict]:
 
 
 def _weighted_mean_alpha(members: List[Dict], cfg: EdgeAlignmentConfig) -> float:
-    weights = np.asarray([max(float(member["length"]), cfg.min_edge_len_m) for member in members], dtype=float)
-    normals = np.asarray([np.asarray(member["n"], dtype=float) for member in members], dtype=float)
-    mean_normal = (normals * weights[:, None]).sum(axis=0)
+    mean_normal = _oriented_normal_sum(members, cfg)
     norm = float(np.linalg.norm(mean_normal))
     if norm <= 1e-12:
         return float(members[0]["alpha"])
@@ -354,7 +368,9 @@ def _clean_ring(coords: np.ndarray, cfg: EdgeAlignmentConfig) -> np.ndarray:
         if np.linalg.norm(v1) < cfg.min_seg_len_m or np.linalg.norm(v2) < cfg.min_seg_len_m:
             continue
 
-        if abs(180.0 - _angle_between(v1, v2)) <= cfg.collinear_tol_deg:
+        # v1 and v2 are consecutive edges: 0 degrees between them is a straight vertex, 180 a spike.
+        turn = _angle_between(v1, v2)
+        if turn <= cfg.collinear_tol_deg or abs(180.0 - turn) <= cfg.collinear_tol_deg:
             continue
 
         keep.append(p_cur)
@@ -401,11 +417,11 @@ def _map_edge_to_cluster(edge: Dict, clusters: List[Dict], cfg: EdgeAlignmentCon
     best_cost = (float("inf"), float("inf"))
     angle_tol = math.radians(cfg.line_angle_tol_deg)
     alpha = edge["alpha"]
-    rho = edge["rho"]
+    midpoint = _edge_midpoint(edge)
 
     for cluster in clusters:
         angle_delta = _angle_diff(alpha, cluster["alpha"])
-        offset_delta = abs(rho - cluster["rho"])
+        offset_delta = _distance_to_line(midpoint, cluster)
         if angle_delta <= angle_tol and offset_delta <= cfg.line_offset_tol_m:
             cost = (angle_delta, offset_delta)
             if cost < best_cost:

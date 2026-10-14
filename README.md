@@ -18,7 +18,7 @@ This repository is a workflow layer around two upstream data sources that are no
 The repository exposes two case-study adapters built around one shared decomposition core:
 
 - `ResPlan`: residential floorplans with semantic room structure and room-level convex decomposition.
-- `OSM`: OpenStreetMap building footprints with artifact filtering, integrated normalization plus conservative edge regularization, optional perimeter preparation, and polygon-level convex decomposition.
+- `OSM`: OpenStreetMap building footprints with the footprint checks, mapping cleanup and footprint geometry of the [BEM4AI](https://github.com/adalach/BEM4AI) pipeline (normalization, edge regularization, thin parts, facade offsets), optional perimeter preparation, and polygon-level convex decomposition.
 
 The public notebooks are stage-level orchestrators. Reusable implementation lives in `src/convexdecomp/`, while the ResPlan notebook clones the upstream repository into a local `external/resplan/` runtime folder only when the dataset archive source is missing.
 
@@ -54,7 +54,7 @@ The OSM case-study input is included directly. The ResPlan raw dataset is fetche
 
 - `notebooks/ResPlan_1_Preprocessing.ipynb` clones `https://github.com/m-agour/ResPlan.git` into `external/resplan/` only when that local archive source is missing, then extracts `ResPlan.zip` into `external/resplan/ResPlan.pkl`.
 - The OSM notebook pipeline reads the bundled GeoPackage `data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`, which is an anonymized reduced derivative of OpenStreetMap contributors data rather than an original dataset created in this repository.
-- Derived notebook outputs are written under `data/resplan/` and `data/osm/`. For the bundled OSM case study, the preprocessing notebook matches the paper by exporting the still non-convex cleaned footprints with 6 to 32 exterior vertices as the downstream decomposition working set, while rendering the matched original-vs-final working-set comparison through the dedicated plotting module `src/convexdecomp/plotting/osm_working_set.py`.
+- Derived notebook outputs are written under `data/resplan/` and `data/osm/`. The OSM preprocessing notebook checks every footprint against `config/checks.json`, cleans it at the preprocessing level `PREPROCESSING_LEVEL` (`L0` local metres only, `L1` + mapping cleanup and normalization, `L2` + edge alignment, thin parts and facade offsets) and exports the working set: every footprint that passes (`WORKING_SET_RULE = 'all'`), or the paper's still non-convex footprints with 6 to 32 exterior vertices (`'paper'`). Next to the working table it writes the checks tables and a funnel of every footprint to `data/osm/preprocessing/`.
 
 See `data/README.md` for the expected local layout.
 
@@ -65,6 +65,8 @@ ConvexDecomp/
 ├── README.md
 ├── pyproject.toml
 ├── requirements.txt
+├── config/
+│   └── checks.json
 ├── data/
 │   ├── osm/
 │   └── resplan/
@@ -89,7 +91,8 @@ ConvexDecomp/
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
 - `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`), the exact openings of a hole that the OSM search tries (`openings.py`), and the splitting of polygons with holes into hole-less pieces used in preprocessing and by ResPlan (`holes.py`).
 - `src/convexdecomp/resplan/`: ResPlan preprocessing, room operations, and decomposition helpers.
-- `src/convexdecomp/osm/`: OSM normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
+- `src/convexdecomp/osm/`: the OSM preprocessing in BEM4AI's terms (`rules.py` reads `config/checks.json`; `footprints.py` the mapping cleanup and footprint measurements; `local_frames.py` the local frames, thin parts and facade offsets; `review_log.py` the review log; `preprocess.py` the notebook's steps), normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
+- `config/checks.json`: the footprint checks and their thresholds, in the layout of BEM4AI's `config/checks.json`; the footprint checks the two pipelines share are the same entries.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
 - `tools/`: the search tracer, the search-tree figure (EG-ICE 2026 style) and the search explorer web app, which record and show every state the search makes; see `tools/README.md`.

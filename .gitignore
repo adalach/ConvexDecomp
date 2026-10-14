@@ -20,3 +20,4 @@ notebooks/*.svg
 temp/
 # Footprints derived from the BEM4AI release run, for local evaluation only
 data/bem4ai/
+data/osm/preprocessing/
