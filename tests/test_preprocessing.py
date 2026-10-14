@@ -38,7 +38,7 @@ def test_repository_checks_load_and_flag_by_kind():
     frame = pd.DataFrame({
         "n_footprint_parts": [1, 2], "footprint_width_m": [10.0, 1.0], "footprint_length_m": [20.0, 30.0],
         "footprint_area_m2": [200.0, 15.0], "n_footprint_holes": [0, 5], "n_footprint_vertices": [4, 8],
-        "min_corner_angle_deg": [90.0, 20.0], "thin_part_share": [0.04, 0.06],
+        "min_corner_angle_deg": [90.0, 20.0], "thin_part_share": [0.01, 0.06],
     })
     at_footprint = rules.evaluate(frame, FOOTPRINT_STAGE)
     assert at_footprint.loc[0].tolist() == ["", "", ""]
@@ -176,7 +176,7 @@ def test_iou_of_outlines_that_differ_by_rounding_noise_is_one():
 def test_a_wing_fails_the_thin_part_check_and_a_stub_is_erased():
     import geopandas as gpd
     winged = box(0, 0, 10, 10).union(box(10, 4, 30, 5.8))       # a 20 m wing 1.8 m wide: 36 of 136 m2
-    stub = box(0, 0, 10, 10).union(box(10, 4, 11.5, 5.8))       # a 1.5 m stub: 2.7 of 102.7 m2
+    stub = box(0, 0, 10, 10).union(box(10, 4, 11.0, 5.8))       # a 1 m stub: 1.8 of 101.8 m2
     gdf = gpd.GeoDataFrame({"sample_id": ["w", "s"], "source_sample_id": ["w", "s"],
                             "footprint_fingerprint": ["fw", "fs"], "geom_local_clean": [winged, stub]},
                            geometry=[winged, stub], crs=None)

@@ -8,7 +8,7 @@
     "sliver_min_aspect_ratio": 8.0,
     "min_corner_angle_deg": 30.0,
     "thin_part_width_m": 2.0,
-    "max_thin_part_share": 0.05
+    "max_thin_part_share": 0.02
   },
   "footprint_cleanup": {
     "thin_part_max_width_m": 1.0,
