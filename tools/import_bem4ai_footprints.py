@@ -5,16 +5,15 @@ BEM4AI Stage 3 (notebook 3, ``data/interim/buildings_gdf.pkl``) draws its buildi
 footprints and stores each footprint after its own cleanup (parts under 1 m cut off, thin holes
 filled, collinear vertices dropped). ConvexDecomp's OSM preprocessing is to start from the outline
 as it is mapped, so this tool reads that outline again from the same city extract BEM4AI drew it
-from (``data/city-assets/OSM_PBF/<city>.osm.pbf``), repairs it as BEM4AI does, and checks it
-against the footprint fingerprint BEM4AI recorded before its cleanup.
+from (``data/city-assets/OSM_PBF/<city>.osm.pbf``) and checks it against the footprint
+fingerprint BEM4AI recorded before its cleanup (BEM4AI fingerprints the outline after
+``make_geometry_valid``, which leaves a valid outline as it is).
 
-Only the 2D geometry is kept. Each footprint is projected to the UTM zone of its city (the metric
-CRS of BEM4AI's candidate tables) and moved so that the centre of its bounding box is the origin,
-as BEM4AI Stage 4 does (`convexdecomp.osm.local_frames.local_frame`); the file therefore has no
-CRS, and ``metric_crs``, ``bbox_cx_m`` and ``bbox_cy_m`` place each footprint back on the map. The
-columns carry BEM4AI's names. Both layers share the frame:
+Only the 2D geometry is kept, in WGS84 as BEM4AI stores it, with the metric CRS of the city
+(``metric_crs``, the UTM zone of BEM4AI's candidate tables) that the adapter projects it to. The
+columns carry BEM4AI's names. Two layers:
 
-- ``footprints``: the OSM outline, read by ``OSM_1_Preprocessing.ipynb``
+- ``footprints``: the OSM outline as mapped (not repaired), read by ``OSM_1_Preprocessing.ipynb``
 - ``footprints_bem4ai``: the same footprint after the BEM4AI Stage 3 cleanup, for comparison
 
 The sample leaves out the footprints the review log removes at stage ``footprints``, and by default
@@ -38,13 +37,8 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from shapely.affinity import translate
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
-
-from convexdecomp.osm.local_frames import local_frame  # noqa: E402
-
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "bem4ai" / "osm_footprints_bem4ai_sample.gpkg"
 
 
@@ -78,7 +72,7 @@ def eligible_footprints(buildings: pd.DataFrame, decisions: pd.DataFrame, keep_r
 
 
 def read_osm_outlines(pbf_path: Path, wanted: pd.DataFrame, helpers) -> dict[str, object]:
-    """``source_sample_id`` -> the repaired OSM outline (WGS84) of the wanted buildings of one extract."""
+    """``source_sample_id`` -> the OSM outline (WGS84, as mapped) of the wanted buildings of one extract."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         city_buildings = helpers.load_city_buildings(pbf_path)
@@ -86,19 +80,9 @@ def read_osm_outlines(pbf_path: Path, wanted: pd.DataFrame, helpers) -> dict[str
     ids = city_buildings["id"].astype("int64").to_numpy()
     types = city_buildings["osm_type"].astype(str).to_numpy()
     hit = np.array([(i, t) in keys for i, t in zip(ids, types)], dtype=bool)
-    by_key = {(int(i), str(t)): helpers.make_geometry_valid(g)
-              for i, t, g in zip(ids[hit], types[hit], city_buildings.geometry.to_numpy()[hit])}
+    by_key = {(int(i), str(t)): g for i, t, g in zip(ids[hit], types[hit], city_buildings.geometry.to_numpy()[hit])}
     return {sid: by_key.get((int(i), str(t)))
             for sid, i, t in zip(wanted["source_sample_id"], wanted["building_id"], wanted["osm_type"])}
-
-
-def to_local_frame(raw_wgs84: list, cleaned_wgs84: list, metric_crs: str) -> tuple[list, list, list]:
-    """Both geometries in the UTM zone, moved so that the bounding-box centre of the outline is the origin."""
-    raw = gpd.GeoSeries(raw_wgs84, crs="EPSG:4326").to_crs(metric_crs)
-    cleaned = gpd.GeoSeries(cleaned_wgs84, crs="EPSG:4326").to_crs(metric_crs)
-    raw_local, cx, cy = local_frame(raw.to_numpy())
-    cleaned_local = [translate(shape, -x, -y) for shape, x, y in zip(cleaned.to_numpy(), cx, cy)]
-    return raw_local, cleaned_local, list(zip(cx, cy))
 
 
 def main() -> int:
@@ -138,20 +122,16 @@ def main() -> int:
     if missing.any():
         raise SystemExit(f"{int(missing.sum())} footprints not found in their extracts: "
                          f"{sample.loc[missing, 'source_sample_id'].tolist()[:10]}")
-    fingerprints = sample["geometry_osm"].map(helpers.footprint_fingerprint)
+    invalid = ~sample["geometry_osm"].map(lambda g: g.is_valid)
+    print(f"Outlines not valid as mapped: {int(invalid.sum())}")
+    fingerprints = sample["geometry_osm"].map(lambda g: helpers.footprint_fingerprint(helpers.make_geometry_valid(g)))
     differ = fingerprints.ne(sample["footprint_fingerprint"])
     if differ.any():
         raise SystemExit(f"{int(differ.sum())} outlines differ from the fingerprint BEM4AI recorded, "
                          f"e.g. {sample.loc[differ, 'source_sample_id'].tolist()[:10]}; was the extract updated?")
     print("Every outline matches the fingerprint BEM4AI recorded before its cleanup")
 
-    raw_local, cleaned_local = [None] * len(sample), [None] * len(sample)
-    origins = [None] * len(sample)
     sample["metric_crs"] = sample["city_key"].map(lambda key: manifest[key]["metric_crs"])
-    for metric_crs, rows in sample.groupby("metric_crs"):
-        r, c, o = to_local_frame(rows["geometry_osm"].tolist(), rows.geometry.tolist(), metric_crs)
-        for k, position in enumerate(rows.index):
-            raw_local[position], cleaned_local[position], origins[position] = r[k], c[k], o[k]
 
     attributes = pd.DataFrame({
         "sample_id": sample["sample_id"],
@@ -161,25 +141,22 @@ def main() -> int:
         "country": sample["country"],
         "osm_type": sample["osm_type"],
         "metric_crs": sample["metric_crs"],
-        "bbox_cx_m": [o[0] for o in origins],
-        "bbox_cy_m": [o[1] for o in origins],
         "review_check_selected": sample["source_sample_id"].map(decisions["by"]).eq("check_review")
                                  & sample["source_sample_id"].map(decisions["decision"]).eq("remove"),
         "bem4ai_n_vertices": sample["n_vertices"].astype(int),
         "bem4ai_cleanup_cut_m2": sample["cleanup_cut_m2"].astype(float),
         "bem4ai_cleanup_filled_m2": sample["cleanup_filled_m2"].astype(float),
     })
-    footprints = gpd.GeoDataFrame(attributes, geometry=raw_local, crs=None)
-    footprints_bem4ai = gpd.GeoDataFrame(attributes[["sample_id"]].copy(), geometry=cleaned_local, crs=None)
+    footprints = gpd.GeoDataFrame(attributes, geometry=sample["geometry_osm"].to_numpy(), crs="EPSG:4326")
+    footprints_bem4ai = gpd.GeoDataFrame(attributes[["sample_id"]].copy(), geometry=sample.geometry.to_numpy(),
+                                         crs="EPSG:4326")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():
         args.output.unlink()
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="'crs' was not provided")  # local frames have none
-        footprints.to_file(args.output, layer="footprints", driver="GPKG")
-        footprints_bem4ai.to_file(args.output, layer="footprints_bem4ai", driver="GPKG")
-    print(f"Wrote {args.output} (layers footprints, footprints_bem4ai; local metres, no CRS)")
+    footprints.to_file(args.output, layer="footprints", driver="GPKG")
+    footprints_bem4ai.to_file(args.output, layer="footprints_bem4ai", driver="GPKG")
+    print(f"Wrote {args.output} (layers footprints, footprints_bem4ai; WGS84)")
     print("Geometry types of the OSM outlines:", footprints.geom_type.value_counts().to_dict())
     return 0
 

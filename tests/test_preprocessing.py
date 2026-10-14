@@ -1,4 +1,4 @@
-"""Checks for the OSM preprocessing: the BEM4AI-style checks, cleanup, local-frame steps, review log and alignment.
+"""Checks for the OSM adapter: checks, local frames, vertices, thin parts, architectural axes, review log.
 
 Runs under pytest, or directly with ``python tests/test_preprocessing.py``.
 """
@@ -10,6 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely import affinity
@@ -17,19 +18,21 @@ from shapely.geometry import Polygon, box
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from convexdecomp.osm.axes import AxesSettings, find_axes, residual_steps, snap_to_axes
 from convexdecomp.osm.axis_alignment import (EdgeAlignmentConfig, _cluster_angle_families, _raw_edges_from_polygon,
                                              _weighted_mean_alpha, align_polygon_edges_via_line_clustering)
-from convexdecomp.osm.footprints import (FootprintCleanup, clean_footprints, footprint_fingerprint, footprint_shapes,
-                                         thin_part_shares)
-from convexdecomp.osm.local_frames import (FacadeOffsetConfig, clean_polygonal_in_one_piece, close_facade_offsets,
-                                           local_frame)
+from convexdecomp.osm.footprints import footprint_fingerprint, footprint_shapes, thin_hole_counts
+from convexdecomp.osm.local_frames import to_local_frames
 from convexdecomp.osm.normalize import FootprintNormalizationConfig, normalize_footprint_geometry
-from convexdecomp.osm.preprocess import GeometrySettings, check_footprints, fidelity, regularize_geometry
+from convexdecomp.osm.preprocess import fidelity
 from convexdecomp.osm.review_log import add_marks, footprint_identity, keep_marks, mark_states, read_log
-from convexdecomp.osm.rules import FOOTPRINT_STAGE, PREPROCESSED_STAGE, load_rules, parse_checks
+from convexdecomp.osm.rules import load_rules, parse_checks
+from convexdecomp.osm.thin_parts import erase_thin_parts
+from convexdecomp.osm.vertices import VertexCleanup, remove_redundant_vertices
 
-ALIGN = EdgeAlignmentConfig(family_angle_tol_deg=3.0, line_angle_tol_deg=2.0, line_offset_tol_m=0.2,
-                            collinear_tol_deg=1.0, min_seg_len_m=0.05, max_vertex_snap_shift_m=0.4)
+
+def vertex_count(poly) -> int:
+    return len(poly.exterior.coords) - 1
 
 
 # ------------------------------------------------------------------------------------------------- rules
@@ -38,16 +41,17 @@ def test_repository_checks_load_and_flag_by_kind():
     frame = pd.DataFrame({
         "n_footprint_parts": [1, 2], "footprint_width_m": [10.0, 1.0], "footprint_length_m": [20.0, 30.0],
         "footprint_area_m2": [200.0, 15.0], "n_footprint_holes": [0, 5], "n_footprint_vertices": [4, 8],
-        "min_corner_angle_deg": [90.0, 20.0], "thin_part_share": [0.01, 0.06],
+        "min_corner_angle_deg": [90.0, 20.0], "n_thin_holes": [0, 1],
+        "thin_part_share": [0.01, 0.06], "thin_part_topology_changed": [False, False],
     })
-    at_footprint = rules.evaluate(frame, FOOTPRINT_STAGE)
-    assert at_footprint.loc[0].tolist() == ["", "", ""]
-    assert set(at_footprint.at[1, "hard_failures"].split(";")) == {
+    flags = rules.evaluate(frame)
+    assert flags.loc[0].tolist() == ["", "", ""]
+    assert set(flags.at[1, "hard_failures"].split(";")) == {
         "footprint_not_one_polygon", "footprint_sliver", "footprint_below_min_area", "sharp_angle",
-        "footprint_thin_parts"}
-    assert at_footprint.at[1, "review_flags"] == "footprint_too_many_holes"
-    # The footprint checks judge the preprocessed footprint as well.
-    assert rules.evaluate(frame, PREPROCESSED_STAGE).equals(at_footprint)
+        "footprint_thin_hole", "footprint_thin_parts"}
+    assert flags.at[1, "review_flags"] == "footprint_too_many_holes"
+    only = rules.evaluate(frame, names=["footprint_thin_parts"])
+    assert only["hard_failures"].tolist() == ["", "footprint_thin_parts"]
 
 
 def test_a_check_must_read_its_columns():
@@ -60,35 +64,17 @@ def test_a_check_must_read_its_columns():
         raise AssertionError("a check reading another column than its columns was accepted")
 
 
-# ---------------------------------------------------------------------------------------------- footprints
-CLEANUP = FootprintCleanup(thin_part_max_width_m=1.0, collinear_tolerance_m=0.05, min_piece_area_m2=20.0)
-
-
-def test_cleanup_cuts_thin_legs_fills_thin_holes_and_drops_straight_vertices():
-    leg = Polygon([(0, 0), (10, 0), (10, 10), (5.3, 10), (5.3, 14), (4.7, 14), (4.7, 10), (0, 10), (0, 5.02)])
-    holed = Polygon(box(0, 0, 10, 10).exterior, [box(4, 2, 4.5, 8).exterior])
-    out, report = clean_footprints([leg, holed], CLEANUP)
-    assert out[0].equals_exact(box(0, 0, 10, 10), 1e-6) or abs(out[0].area - 100.0) < 1e-6
-    assert len(out[0].exterior.coords) - 1 == 4                 # the leg is gone and (0, 5.02) dropped
-    assert math.isclose(report.at[0, "cleanup_cut_m2"], 0.6 * 4, rel_tol=1e-6)
-    assert report.at[0, "n_osm_vertices"] == 9
-    assert len(out[1].interiors) == 0 and math.isclose(report.at[1, "cleanup_filled_m2"], 3.0)
-
-
+# ---------------------------------------------------------------------------------------------- measures
 def test_footprint_shapes_of_a_rectangle():
     row = footprint_shapes([box(0, 0, 20, 10)]).iloc[0]
     assert (row["n_footprint_parts"], row["n_footprint_holes"], row["n_footprint_vertices"]) == (1, 0, 4)
     assert math.isclose(row["footprint_width_m"], 10) and math.isclose(row["footprint_length_m"], 20)
     assert math.isclose(row["min_corner_angle_deg"], 90.0) and math.isclose(row["footprint_area_m2"], 200.0)
-    assert math.isclose(row["footprint_circularity"], 4 * math.pi * 200 / 60 ** 2)
 
 
-def test_thin_part_share_counts_parts_narrower_than_the_zone_width():
-    with_strip = box(0, 0, 10, 10).union(box(10, 0, 20, 1.5))   # a 1.5 m wide strip of 15 m2
-    shares = thin_part_shares([box(0, 0, 10, 10), with_strip, box(0, 0, 1, 10)], 2.0)
-    assert shares[0] == 0.0
-    assert math.isclose(shares[1], 15.0 / 115.0, rel_tol=1e-6)
-    assert shares[2] == 1.0
+def test_thin_holes_are_counted():
+    courtyard = Polygon(box(0, 0, 20, 20).exterior, [box(5, 5, 15, 15).exterior, box(2, 2, 2.6, 4).exterior])
+    assert thin_hole_counts([courtyard, box(0, 0, 5, 5)], 1.0).tolist() == [1, 0]
 
 
 def test_fingerprint_ignores_noise_below_the_grid_and_the_start_vertex():
@@ -98,30 +84,109 @@ def test_fingerprint_ignores_noise_below_the_grid_and_the_start_vertex():
     assert footprint_fingerprint(square) != footprint_fingerprint(affinity.translate(square, 0.05, 0))
 
 
-# --------------------------------------------------------------------------------------------- local frames
-def test_local_frame_centres_the_bounding_box():
-    moved, cx, cy = local_frame([box(100, 200, 120, 210)])
-    assert moved[0].bounds == (-10.0, -5.0, 10.0, 5.0) and (cx[0], cy[0]) == (110.0, 205.0)
+def test_iou_of_outlines_that_differ_by_rounding_noise_is_one():
+    a = Polygon([(-2.63, 2.57), (3.56, 0.77), (2.63, -2.57), (-3.56, -0.77)])
+    b = Polygon([(-2.63, 2.57), (3.5599999999999996, 0.7699999999999999), (2.63, -2.57),
+                 (-3.5599999999999996, -0.7699999999999999)])
+    assert math.isclose(fidelity([a], [b])["fidelity_iou"].iloc[0], 1.0)
 
 
-def test_thin_part_cleanup_keeps_a_footprint_in_one_piece():
+# -------------------------------------------------------------------------------------------- local frame
+def test_local_frame_projects_and_centres_the_bounding_box():
+    square = box(11.575, 48.137, 11.5753, 48.1372)  # in Munich, WGS84
+    gdf = gpd.GeoDataFrame({"metric_crs": ["EPSG:32632"], "geometry_bem4ai": gpd.GeoSeries([square], crs="EPSG:4326")},
+                           geometry=[square], crs="EPSG:4326")
+    out = to_local_frames(gdf, {"geometry": "geom_local_raw", "geometry_bem4ai": "geom_local_bem4ai"})
+    minx, miny, maxx, maxy = out.at[0, "geom_local_raw"].bounds
+    assert abs(minx + maxx) < 1e-6 and abs(miny + maxy) < 1e-6 and 15 < maxx - minx < 30
+    assert out.at[0, "geom_local_bem4ai"].equals_exact(out.at[0, "geom_local_raw"], 1e-9)
+    assert out.at[0, "bbox_cx_m"] > 600_000 and out.crs is None
+
+
+# ----------------------------------------------------------------------------------------------- vertices
+def test_duplicate_and_collinear_vertices_are_dropped_and_corners_kept():
+    noisy = Polygon([(0, 0), (5, 0.03), (10, 0), (10, 0.004), (10, 10), (5, 10.04), (0, 10)])
+    cleaned, removed = remove_redundant_vertices(noisy)
+    assert vertex_count(cleaned) == 4 and removed == 3
+    stepped = Polygon([(0, 0), (12, 0), (12, 0.3), (20, 0.3), (20, 10), (0, 10)])
+    assert remove_redundant_vertices(stepped)[1] == 0
+
+
+def test_vertex_cleanup_moves_the_outline_at_most_its_tolerance():
+    arc = [(10 * math.cos(t), 10 * math.sin(t)) for t in np.linspace(0, math.pi, 40)]
+    poly = Polygon(arc)
+    cleaned, removed = remove_redundant_vertices(poly, VertexCleanup(0.01, 0.05))
+    assert removed > 0 and cleaned.hausdorff_distance(poly) <= 0.05 + 1e-9
+
+
+def test_a_spike_is_not_a_collinear_vertex():
+    spiked = Polygon([(0, 0), (10, 0), (10, 10), (5, 10), (5.02, 13), (5.04, 10), (0, 10)])
+    assert remove_redundant_vertices(spiked)[0].equals(spiked)
+
+
+# ---------------------------------------------------------------------------------------------- thin parts
+def test_a_stub_is_cut_and_a_curve_keeps_its_vertices():
+    arc = [(20 + 6 * math.cos(t), 5 + 6 * math.sin(t)) for t in np.linspace(-math.pi / 2, math.pi / 2, 15)]
+    curved = Polygon([(0, -1), *arc, (0, 11)])
+    stubbed = curved.union(box(-1.5, 4, 0.0, 5.2))                    # a 1.2 m wide stub on the west wall
+    out, report = erase_thin_parts([curved, stubbed], 2.0)
+    assert report["thin_part_share"].iloc[0] == 0.0 and out[0].equals(curved)  # a curve is not a thin part
+    assert abs(out[1].area - curved.area) < 1e-4
+    assert not report["thin_part_topology_changed"].any()
+
+
+def test_a_split_or_an_opened_courtyard_is_a_topology_change():
     dumbbell = box(0, 0, 10, 10).union(box(10, 4.2, 14, 5.8)).union(box(14, 0, 24, 10))
-    cleaned, mode = clean_polygonal_in_one_piece(dumbbell, 1.0, 1.0, 2.0)
-    assert mode in {"cleaned_reduced", "uncleaned"} and cleaned.geom_type == "Polygon"
-    legged = box(0, 0, 10, 10).union(box(10, 0, 13, 1.2))
-    cleaned, mode = clean_polygonal_in_one_piece(legged, 1.0, 1.0, 2.0)
-    assert mode == "cleaned" and math.isclose(cleaned.area, 100.0, rel_tol=1e-6)
+    thin_wall = Polygon(box(0, 0, 20, 20).exterior, [box(1.5, 5, 15, 15).exterior])  # 1.5 m between hole and outside
+    _, report = erase_thin_parts([dumbbell, thin_wall], 2.0)
+    assert report["thin_part_topology_changed"].tolist() == [True, True]
 
 
-def test_facade_offsets_of_a_few_decimetres_are_closed():
-    jogged = Polygon([(0, 0), (12, 0), (12, 0.3), (20, 0.3), (20, 10), (0, 10)])
-    closed, info = close_facade_offsets(jogged, FacadeOffsetConfig())
-    assert info["status"] == "closed" and len(closed.exterior.coords) - 1 == 4
-    far, info = close_facade_offsets(Polygon([(0, 0), (12, 0), (12, 2), (20, 2), (20, 10), (0, 10)]))
-    assert info["status"] == "unchanged" and far.equals(Polygon([(0, 0), (12, 0), (12, 2), (20, 2), (20, 10), (0, 10)]))
+def test_a_wing_takes_a_large_share_off():
+    winged = box(0, 0, 10, 10).union(box(10, 4, 30, 5.8))           # a 20 m wing 1.8 m wide: 36 of 136 m2
+    _, report = erase_thin_parts([winged], 2.0)
+    assert math.isclose(report["thin_part_share"].iloc[0], 36 / 136, rel_tol=1e-3)
 
 
-# ----------------------------------------------------------------------------------------------- review log
+# ------------------------------------------------------------------------------------------------- axes
+def test_facade_steps_up_to_the_offset_tolerance_close():
+    small = Polygon([(0, 0), (12, 0), (12, 0.4), (20, 0.4), (20, 10), (0, 10)])
+    large = Polygon([(0, 0), (12, 0), (12, 0.8), (20, 0.8), (20, 10), (0, 10)])
+    out, status, _ = snap_to_axes(small)
+    assert status == "snapped" and vertex_count(out) == 4 and residual_steps(out) == 0
+    assert out.hausdorff_distance(small) <= 0.4 + 1e-9                  # the longer run stays, the shorter moves
+    assert snap_to_axes(large)[1] == "unchanged"
+
+
+def test_a_slightly_bent_wall_becomes_one_wall_without_a_step():
+    bent = Polygon([(0, 0), (15, 0), (30, 0.52), (30, 10), (0, 10)])
+    out, status, _ = snap_to_axes(bent)
+    assert status == "snapped" and vertex_count(out) == 4 and residual_steps(out) == 0
+
+
+def test_north_south_walls_either_side_of_the_wrap_are_one_direction():
+    kinked = Polygon([(0, 0), (10, 0.087), (20, 0), (20, 10), (10, 10.087), (0, 10)])
+    for rotation in (0.0, 90.0, 45.0, 0.3, 89.7):
+        poly = affinity.rotate(kinked, rotation, origin=(0, 0))
+        axes = find_axes(poly)
+        assert len(axes.directions) == 2, rotation
+        assert vertex_count(snap_to_axes(poly, axes=axes)[0]) == 4, rotation
+
+
+def test_walls_facing_each_other_are_never_one_line():
+    slot = Polygon([(0, 0), (20, 0), (20, 10), (10.2, 10), (10.2, 3), (9.8, 3), (9.8, 10), (0, 10)])  # 0.4 m slot
+    axes = find_axes(slot, AxesSettings(offset_tolerance_m=0.5))
+    sides = [line for line in axes.lines if abs(math.cos(axes.directions[line["direction"]])) < 1e-6]
+    assert len(sides) == 4                                              # x = 0, 9.8, 10.2, 20 stay apart
+
+
+def test_a_normalization_that_moves_too_far_is_refused():
+    stepped = Polygon([(0, 0), (12, 0), (12, 0.4), (20, 0.4), (20, 10), (0, 10)])
+    out, status, _ = snap_to_axes(stepped, AxesSettings(max_move_m=0.1))
+    assert status == "kept_move" and out.equals(stepped)
+
+
+# ------------------------------------------------------------------------------------------- review log
 def test_review_decisions_apply_while_the_fingerprint_holds():
     table = pd.DataFrame({"source_sample_id": ["a", "b"], "sample_id": ["s1", "s2"],
                           "footprint_fingerprint": ["f1", "f2"]})
@@ -135,56 +200,29 @@ def test_review_decisions_apply_while_the_fingerprint_holds():
         assert states.to_dict() == {"a": "applies", "b": "changed"}
 
 
-# ----------------------------------------------------------------------------------------------- alignment
-def _edge(alpha_deg):
-    a = math.radians(alpha_deg % 180.0)
-    return {"alpha": a, "length": 10.0, "n": np.array([math.cos(a), math.sin(a)])}
+# ----------------------------------------------------------------------------- earlier alignment and normalization
+ALIGN = EdgeAlignmentConfig(family_angle_tol_deg=3.0, line_angle_tol_deg=2.0, line_offset_tol_m=0.2,
+                            collinear_tol_deg=1.0, min_seg_len_m=0.05, max_vertex_snap_shift_m=0.4)
 
 
-def test_directions_either_side_of_north_south_average_to_north_south():
-    mean = math.degrees(_weighted_mean_alpha([_edge(0.5), _edge(179.5)], ALIGN)) % 180.0
+def test_alignment_averages_directions_either_side_of_north_south():
+    edges = [{"alpha": math.radians(a), "length": 10.0, "n": np.array([math.cos(math.radians(a)), math.sin(math.radians(a))])}
+             for a in (0.5, 179.5)]
+    mean = math.degrees(_weighted_mean_alpha(edges, ALIGN)) % 180.0
     assert min(mean, 180.0 - mean) < 1e-9
 
 
-def test_a_kinked_wall_is_straightened_in_every_orientation():
+def test_alignment_straightens_a_kinked_wall():
     kinked = Polygon([(0, 0), (10, 0.087), (20, 0), (20, 10), (10, 10.087), (0, 10)])
-    for rotation in (0.0, 90.0, 45.0, 0.3, 89.7):
-        poly = affinity.rotate(kinked, rotation, origin=(0, 0))
-        assert len(_cluster_angle_families(_raw_edges_from_polygon(poly, ALIGN), ALIGN)) == 2, rotation
-        aligned = align_polygon_edges_via_line_clustering(poly, ALIGN)
-        assert len(aligned.exterior.coords) - 1 == 4, rotation
+    poly = affinity.rotate(kinked, 90.0, origin=(0, 0))
+    assert len(_cluster_angle_families(_raw_edges_from_polygon(poly, ALIGN), ALIGN)) == 2
+    assert vertex_count(align_polygon_edges_via_line_clustering(poly, ALIGN)) == 4
 
 
-# --------------------------------------------------------------------------------------------- normalization
 def test_normalization_distance_limit_keeps_the_original():
-    # A 0.15 m bump along a 20 m wall: normalization flattens it, moving the outline by 0.15 m.
     bumped = Polygon([(0, 0), (9, 0), (10, -0.15), (11, 0), (20, 0), (20, 10), (0, 10)])
-    flattened = normalize_footprint_geometry(bumped, FootprintNormalizationConfig())
-    assert len(flattened.exterior.coords) - 1 == 4
-    kept = normalize_footprint_geometry(bumped, FootprintNormalizationConfig(max_hausdorff_m=0.1))
-    assert kept.equals(bumped)
-
-
-# -------------------------------------------------------------------------------------------- preprocessing
-def test_iou_of_outlines_that_differ_by_rounding_noise_is_one():
-    a = Polygon([(-2.63, 2.57), (3.56, 0.77), (2.63, -2.57), (-3.56, -0.77)])
-    b = Polygon([(-2.63, 2.57), (3.5599999999999996, 0.7699999999999999), (2.63, -2.57),
-                 (-3.5599999999999996, -0.7699999999999999)])
-    assert math.isclose(fidelity([a], [b])["fidelity_iou"].iloc[0], 1.0)
-
-
-def test_a_wing_fails_the_thin_part_check_and_a_stub_is_erased():
-    import geopandas as gpd
-    winged = box(0, 0, 10, 10).union(box(10, 4, 30, 5.8))       # a 20 m wing 1.8 m wide: 36 of 136 m2
-    stub = box(0, 0, 10, 10).union(box(10, 4, 11.0, 5.8))       # a 1 m stub: 1.8 of 101.8 m2
-    gdf = gpd.GeoDataFrame({"sample_id": ["w", "s"], "source_sample_id": ["w", "s"],
-                            "footprint_fingerprint": ["fw", "fs"], "geom_local_clean": [winged, stub]},
-                           geometry=[winged, stub], crs=None)
-    checks = check_footprints(gdf, "geom_local_clean", load_rules(), FOOTPRINT_STAGE).set_index("sample_id")
-    assert checks.at["w", "hard_failures"] == "footprint_thin_parts" and checks.at["s", "hard_failures"] == ""
-    settings = GeometrySettings(FootprintNormalizationConfig(), ALIGN, 1.0, FacadeOffsetConfig())
-    out = regularize_geometry(gdf.loc[[1]], "L2", settings).set_index("sample_id")
-    assert out.at["s", "cleanup_mode"] == "cleaned" and math.isclose(out.at["s", "geom_local"].area, 100.0)
+    assert vertex_count(normalize_footprint_geometry(bumped, FootprintNormalizationConfig())) == 4
+    assert normalize_footprint_geometry(bumped, FootprintNormalizationConfig(max_hausdorff_m=0.1)).equals(bumped)
 
 
 if __name__ == "__main__":

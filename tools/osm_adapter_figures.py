@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
-"""Figures and numbers of the OSM adapter note: the BEM4AI footprint sample through every preprocessing step.
+"""Figures and numbers of the OSM adapter note: the BEM4AI footprint sample through every step of the adapter.
 
-Runs the preprocessing of ``OSM_1_Preprocessing.ipynb`` (level L2, the notebook's settings) on the
-BEM4AI sample, keeps every intermediate geometry, and writes one SVG per figure plus
-``osm_adapter_numbers.json`` with the counts the note quotes::
+Runs the adapter (`convexdecomp.osm.preprocess.run_adapter`, level L2, the notebook's settings) on
+the BEM4AI sample, and writes one SVG per figure plus ``osm_adapter_numbers.json`` with the counts
+the note quotes::
 
-    python tools/osm_adapter_figures.py --out /path/to/attachments
+    python tools/osm_adapter_figures.py --out /path/to/attachments --types building_types.csv
+
+``--types`` is a CSV of ``sample_id`` and ``building_type`` (from BEM4AI's ``buildings_gdf.pkl``)
+for the composition figure.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-import geopandas as gpd  # noqa: E402
 import matplotlib as mpl  # noqa: E402
 
 mpl.use("Agg")
@@ -29,18 +33,16 @@ import pandas as pd  # noqa: E402
 import shapely  # noqa: E402
 from shapely.ops import unary_union  # noqa: E402
 
-from convexdecomp.osm.axis_alignment import EdgeAlignmentConfig, alignment_axis_records_for_polygon  # noqa: E402
+from convexdecomp.osm.axes import AxesSettings, residual_steps, snap_to_axes  # noqa: E402
 from convexdecomp.osm.footprints import footprint_shapes  # noqa: E402
-from convexdecomp.osm.local_frames import FacadeOffsetConfig, clean_polygonal, clean_polygonal_in_one_piece  # noqa: E402
-from convexdecomp.osm.normalize import FootprintNormalizationConfig, count_exterior_vertices  # noqa: E402
-from convexdecomp.osm.preprocess import (GeometrySettings, check_footprints, clean_mapping_artefacts,  # noqa: E402
-                                         fidelity, load_footprints, reflex_vertex_counts, regularize_geometry)
-from convexdecomp.osm.rules import FOOTPRINT_STAGE, PREPROCESSED_STAGE, load_rules  # noqa: E402
+from convexdecomp.osm.normalize import count_exterior_vertices  # noqa: E402
+from convexdecomp.osm.preprocess import AdapterSettings, reflex_vertex_counts, run_adapter  # noqa: E402
+from convexdecomp.osm.rules import load_rules  # noqa: E402
 
 SAMPLE = ROOT / "data" / "bem4ai" / "osm_footprints_bem4ai_sample.gpkg"
 
 TUM_BLUE, LIGHT_BLUE, PALE_BLUE = "#0065BD", "#98C6EA", "#EAF4FB"
-GREY, MID_GREY, ORANGE, AXES = "#D9DADB", "#9C9E9F", "#E37222", "#5C6770"
+GREY, MID_GREY, ORANGE, AXES_GREY = "#D9DADB", "#9C9E9F", "#E37222", "#5C6770"
 CYCLE = ["#1F4E79", "#C17C00", "#2A9D8F", "#8E44AD", "#00B4D8"]
 
 mpl.rcParams.update({
@@ -49,30 +51,12 @@ mpl.rcParams.update({
     "font.size": 9, "axes.titlesize": 8.5, "axes.labelsize": 9,
     "xtick.labelsize": 8, "ytick.labelsize": 8, "legend.fontsize": 8,
     "axes.spines.top": False, "axes.spines.right": False,
-    "axes.edgecolor": AXES, "axes.linewidth": 0.8,
+    "axes.edgecolor": AXES_GREY, "axes.linewidth": 0.8,
     "axes.grid": True, "grid.color": GREY, "grid.linestyle": ":", "grid.linewidth": 0.6,
     "axes.prop_cycle": mpl.cycler(color=CYCLE),
     "lines.linewidth": 1.6, "legend.frameon": False,
     "svg.fonttype": "none", "savefig.bbox": "tight",
 })
-
-
-def geometry_settings(rules) -> GeometrySettings:
-    """The geometry settings of ``OSM_1_Preprocessing.ipynb``."""
-    return GeometrySettings(
-        normalization=FootprintNormalizationConfig(
-            simplify_tolerance_m=0.2, snap_tolerance_m=0.05, min_edge_length_m=0.75, collinear_distance_tol_m=0.3,
-            collinear_angle_tol_deg=10.0, area_change_ratio_tol=0.03, area_change_m2_tol=3.0, max_hausdorff_m=0.5,
-            max_passes=8),
-        alignment=EdgeAlignmentConfig(
-            use_angle_families=True, family_angle_tol_deg=3.0, line_angle_tol_deg=2.0, line_offset_tol_m=0.2,
-            collinear_tol_deg=1.0, min_seg_len_m=0.05, max_vertex_snap_shift_m=0.4, align_min_area_ratio=0.97,
-            align_max_area_ratio=1.03, align_max_edge_stretch=2.0, align_max_hausdorff_m=0.5),
-        thin_part_shrink_m=float(rules.thresholds["footprint"]["thin_part_width_m"]) / 2.0,
-        facade_offsets=FacadeOffsetConfig(max_offset_m=0.5, angle_tol_deg=0.5, max_vertex_shift_m=1.0,
-                                          max_area_change_ratio=0.05),
-        min_piece_area_m2=2.0,
-    )
 
 
 # ------------------------------------------------------------------------------------------------ drawing
@@ -86,8 +70,9 @@ def draw(ax, geom, *, face="none", edge=TUM_BLUE, lw=1.0, alpha=1.0, dots=False,
             hx, hy = ring.xy
             ax.fill(hx, hy, facecolor="white", edgecolor=edge, linewidth=lw, zorder=z + 0.1)
         if dots:
-            pts = np.asarray(poly.exterior.coords[:-1])
-            ax.plot(pts[:, 0], pts[:, 1], "o", ms=2.2, color=edge, zorder=z + 0.2)
+            for ring in [poly.exterior, *poly.interiors]:
+                pts = np.asarray(ring.coords[:-1])
+                ax.plot(pts[:, 0], pts[:, 1], "o", ms=2.2, color=edge, zorder=z + 0.2)
 
 
 def frame(ax, geoms, pad=0.06, half_extent=None):
@@ -129,8 +114,22 @@ def removed_part(before, after):
         return None
 
 
-# --------------------------------------------------------------------------------------------------- figures
-def fig_sample_overview(raw, bem_types, out):
+def fig_before_after(rows, before_col, after_col, out, stem, titles, *, ncols=4, dots=True, removed=True, size=1.9):
+    fig, axes = panels(len(rows), ncols, size=size)
+    for ax, (sid, row) in zip(axes, rows.iterrows()):
+        before, after = row[before_col], row[after_col]
+        draw(ax, before, face=GREY, edge=MID_GREY, lw=0.6, dots=dots, z=1)
+        if removed:
+            draw(ax, removed_part(before, after), face=ORANGE, edge="none", alpha=0.85, z=1.5)
+        draw(ax, after, face="none", edge=TUM_BLUE, lw=1.1, dots=dots, z=3)
+        frame(ax, [before, after])
+        label(ax, titles(sid, row))
+    fig.tight_layout()
+    save(fig, out, stem)
+
+
+# ------------------------------------------------------------------------------------------------ figures
+def fig_sample_overview(raw, types, out):
     fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.6))
     counts = raw["country"].value_counts().sort_values()
     ax = axes[0, 0]
@@ -139,10 +138,11 @@ def fig_sample_overview(raw, bem_types, out):
     ax.tick_params(axis="y", labelsize=6.5)
     ax.grid(axis="y", visible=False)
     ax = axes[0, 1]
-    types = bem_types.value_counts().sort_values()
-    ax.barh(types.index, types.to_numpy(), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6, height=0.6)
-    ax.set_xlabel("Footprints")
-    ax.grid(axis="y", visible=False)
+    if types is not None:
+        t = types.value_counts().sort_values()
+        ax.barh(t.index, t.to_numpy(), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6, height=0.6)
+        ax.set_xlabel("Footprints")
+        ax.grid(axis="y", visible=False)
     ax = axes[1, 0]
     area = raw["geom_local_raw"].map(lambda g: g.area)
     ax.hist(area, bins=np.logspace(np.log10(20), np.log10(2100), 30), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6)
@@ -150,8 +150,7 @@ def fig_sample_overview(raw, bem_types, out):
     ax.set_xlabel("Footprint area (m²)")
     ax.set_ylabel("Footprints")
     ax = axes[1, 1]
-    v = np.minimum(raw["n_vertices_raw"], 50)
-    r = np.minimum(raw["n_reflex_raw"], 50)
+    v, r = np.minimum(raw["n_vertices_raw"], 50), np.minimum(raw["n_reflex_raw"], 50)
     bins = np.arange(-0.5, 51.5, 1)
     ax.hist(v, bins=bins, histtype="step", color=CYCLE[0], label=f"exterior vertices (median {int(np.median(raw['n_vertices_raw']))})")
     ax.hist(r, bins=bins, histtype="step", color=CYCLE[1], label=f"reflex corners (median {int(np.median(raw['n_reflex_raw']))})")
@@ -164,12 +163,13 @@ def fig_sample_overview(raw, bem_types, out):
 
 
 def fig_gallery(raw, out, n=30, seed=7, half=50.0):
-    pick = raw.sample(n=n, random_state=seed).sort_values("geom_local_raw", key=lambda s: s.map(lambda g: g.area))
+    pick = raw.sample(n=n, random_state=seed)
+    pick = pick.iloc[np.argsort(pick["geom_local_raw"].map(lambda g: g.area).to_numpy())]
     fig, axes = panels(n, 6, size=1.15)
     for ax, (_, row) in zip(axes, pick.iterrows()):
         draw(ax, row["geom_local_raw"], face=LIGHT_BLUE, edge=TUM_BLUE, lw=0.7)
         frame(ax, None, half_extent=half)
-        ax.text(-half, -half, row["sample_id"].rsplit("_", 1)[0][:14], fontsize=5.5, color=AXES, va="bottom")
+        ax.text(-half, -half, str(row["sample_id"]).rsplit("_", 1)[0][:14], fontsize=5.5, color=AXES_GREY, va="bottom")
     ax = axes[0]
     ax.plot([-half + 2, -half + 22], [half - 5, half - 5], color="black", lw=1.2)
     ax.text(-half + 12, half - 3, "20 m", ha="center", va="bottom", fontsize=6)
@@ -177,75 +177,53 @@ def fig_gallery(raw, out, n=30, seed=7, half=50.0):
     save(fig, out, "osm_sample_gallery")
 
 
-def fig_before_after(rows, before_col, after_col, out, stem, titles, *, ncols=4, dots=True, removed=True,
-                     marks=None, size=1.9):
-    fig, axes = panels(len(rows), ncols, size=size)
+def fig_axes(rows, out, settings):
+    fig, axes = panels(len(rows), 4, size=1.9)
     for ax, (sid, row) in zip(axes, rows.iterrows()):
-        before, after = row[before_col], row[after_col]
-        draw(ax, before, face=GREY, edge=MID_GREY, lw=0.6, dots=dots, z=1)
-        if removed:
-            draw(ax, removed_part(before, after), face=ORANGE, edge="none", alpha=0.85, z=1.5)
-        draw(ax, after, face="none", edge=TUM_BLUE, lw=1.1, dots=dots, z=3)
-        if marks is not None and sid in marks:
-            x, y = marks[sid]
-            ax.plot([x], [y], "o", ms=9, mfc="none", mec=ORANGE, mew=1.4, zorder=5)
-        frame(ax, [before, after])
-        label(ax, titles(sid, row))
+        geom, axes_ = row["geom_local_thin"], row["axes"]
+        draw(ax, geom, face=PALE_BLUE, edge=TUM_BLUE, lw=0.8, z=2)
+        for k, line in axes_.line_geometries(geom.bounds, pad=1.5):
+            x, y = line.xy
+            ax.plot(x, y, ls="--", lw=0.7, color=CYCLE[k % len(CYCLE)], zorder=3)
+        frame(ax, [geom.buffer(1.5)])
+        label(ax, f"{sid}\n{len(axes_.directions)} directions, {len(axes_.lines)} wall lines")
     fig.tight_layout()
-    save(fig, out, stem)
-
-
-def sharpest_corner_point(geom):
-    pts = np.asarray(shapely.geometry.polygon.orient(geom, 1.0).exterior.coords[:-1])
-    v1 = pts - np.roll(pts, 1, axis=0)
-    v2 = np.roll(pts, -1, axis=0) - pts
-    turn = np.degrees(np.arctan2(v1[:, 0] * v2[:, 1] - v1[:, 1] * v2[:, 0], (v1 * v2).sum(axis=1)))
-    inside = 180.0 - turn
-    k = int(np.argmin(inside))
-    return tuple(pts[k]), float(inside[k])
-
-
-def shortest_edge(geom):
-    pts = np.asarray(geom.exterior.coords)
-    return float(np.hypot(*np.diff(pts, axis=0).T).min())
-
-
-def fig_alignment_axes(m, ids, cfg, out):
-    fig, axes = panels(len(ids), 4, size=1.9)
-    for ax, sid in zip(axes, ids):
-        row = m.loc[sid]
-        geom = row["geometry_before_align"]
-        records, diag = alignment_axis_records_for_polygon(geom, cfg)
-        families = sorted({round(r["family_angle_deg"], 1) for r in records})
-        colours = {f: CYCLE[k % len(CYCLE)] for k, f in enumerate(families)}
-        draw(ax, row["geom_local_preray"], face=PALE_BLUE, edge=TUM_BLUE, lw=0.9, z=2)
-        for r in records:
-            x, y = r["geometry"].xy
-            ax.plot(x, y, ls="--", lw=0.7, color=colours[round(r["family_angle_deg"], 1)], zorder=3)
-        frame(ax, [geom])
-        label(ax, f"{sid}\n{diag['n_angle_families']} families, {diag['n_axes']} lines, moved {row['align_moved']:.2f} m")
-    fig.tight_layout()
-    save(fig, out, "osm_alignment_axes")
+    save(fig, out, "osm_axes_examples")
 
 
 def fig_stage_sequence(m, ids, out):
-    stages = [("geom_local_raw", "OSM outline"), ("geom_local_clean", "mapping cleanup"),
-              ("geometry_before_align", "normalization"), ("geom_local_preray", "alignment"),
-              ("geom_thin", "thin parts"), ("geom_local", "facade offsets")]
-    fig, axes = plt.subplots(len(ids), len(stages), figsize=(1.35 * len(stages), 1.45 * len(ids)), squeeze=False)
+    stages = [("geom_local_raw", "OSM outline"), ("geom_local_vertices", "vertices"),
+              ("geom_local_thin", "thin parts"), ("geom_local", "normalized")]
+    fig, axes = plt.subplots(len(ids), len(stages), figsize=(1.6 * len(stages), 1.6 * len(ids)), squeeze=False)
     for i, (axes_row, sid) in enumerate(zip(axes, ids)):
         row = m.loc[sid]
         geoms = [row[c] for c, _ in stages]
-        for k, (ax, (column, title)) in enumerate(zip(axes_row, stages)):
+        for ax, (column, title) in zip(axes_row, stages):
             draw(ax, row["geom_local_raw"], face="none", edge=MID_GREY, lw=0.5, z=1)
             draw(ax, row[column], face=PALE_BLUE, edge=TUM_BLUE, lw=0.8, dots=True, z=2)
             frame(ax, geoms)
             n = count_exterior_vertices(row[column])
             ax.set_title(f"{title}\n{n} vertices" if i == 0 else f"{n} vertices", fontsize=6.5, pad=2)
-        axes_row[0].text(-0.05, 0.5, sid, transform=axes_row[0].transAxes, rotation=90, ha="right", va="center",
-                         fontsize=6.5)
+        axes_row[0].text(-0.05, 0.5, sid, transform=axes_row[0].transAxes, rotation=90, ha="right", va="center", fontsize=6.5)
     fig.tight_layout()
     save(fig, out, "osm_stage_sequence")
+
+
+def fig_parameter_study(study: pd.DataFrame, out):
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.4))
+    for ortho, style in ((False, "-"), (True, "--")):
+        d = study.loc[study["ortho"].eq(ortho)].sort_values("offset_m")
+        lab = "right angles snapped" if ortho else "directions as found"
+        axes[0].plot(d["offset_m"], d["steps"], style, marker="o", ms=3, color=CYCLE[0], label=lab)
+        axes[1].plot(d["offset_m"], d["move_p99"], style, marker="o", ms=3, color=CYCLE[1], label=lab)
+        axes[2].plot(d["offset_m"], d["kept"], style, marker="o", ms=3, color=CYCLE[2], label=lab)
+    for ax, ylabel in zip(axes, ["Facade steps up to 0.5 m left", "Largest move, 99th percentile (m)",
+                                 "Normalizations refused"]):
+        ax.set_xlabel("Wall-line offset tolerance (m)")
+        ax.set_ylabel(ylabel)
+    axes[0].legend()
+    fig.tight_layout()
+    save(fig, out, "osm_axes_parameter_study")
 
 
 def fig_fidelity(final, out):
@@ -255,12 +233,10 @@ def fig_fidelity(final, out):
     axes[0].set_xscale("log")
     axes[0].set_xlabel("Largest move from the OSM outline (m)")
     axes[0].set_ylabel("Footprints")
-    a = final["fidelity_area_change_pct"]
-    axes[1].hist(a, bins=np.linspace(-4, 4, 33), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6)
+    axes[1].hist(final["fidelity_area_change_pct"], bins=np.linspace(-4, 4, 33), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6)
     axes[1].set_xlabel("Area change (%)")
     axes[1].set_yscale("log")
-    i = final["fidelity_iou"]
-    axes[2].hist(i, bins=np.linspace(0.93, 1.0, 29), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6)
+    axes[2].hist(final["fidelity_iou"], bins=np.linspace(0.93, 1.0, 29), color=LIGHT_BLUE, edgecolor=TUM_BLUE, linewidth=0.6)
     axes[2].set_xlabel("Intersection over union")
     axes[2].set_yscale("log")
     fig.tight_layout()
@@ -269,13 +245,16 @@ def fig_fidelity(final, out):
 
 def fig_working_set_complexity(final, out):
     fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.5))
+    final = final.assign(n_vertices_final=final["geom_local"].map(count_exterior_vertices),
+                         n_vertices_raw=final["geom_local_raw"].map(count_exterior_vertices))
     for ax, (before, after, xlabel) in zip(axes, [("n_vertices_raw", "n_vertices_final", "Exterior vertices"),
-                                                 ("n_reflex_raw", "n_reflex_final", "Reflex corners")]):
+                                                 ("n_reflex_raw", "n_reflex", "Reflex corners")]):
         cap = 40
         bins = np.arange(-0.5, cap + 1.5, 1)
-        b, a = np.minimum(final[before], cap), np.minimum(final[after], cap)
-        ax.hist(b, bins=bins, histtype="step", color=CYCLE[1], label=f"OSM outline (median {int(final[before].median())})")
-        ax.hist(a, bins=bins, histtype="step", color=CYCLE[0], label=f"forwarded (median {int(final[after].median())})")
+        ax.hist(np.minimum(final[before], cap), bins=bins, histtype="step", color=CYCLE[1],
+                label=f"OSM outline (median {int(final[before].median())})")
+        ax.hist(np.minimum(final[after], cap), bins=bins, histtype="step", color=CYCLE[0],
+                label=f"forwarded (median {int(final[after].median())})")
         ax.set_yscale("log")
         ax.set_xlabel(f"{xlabel} (values above {cap} counted at {cap})")
         ax.set_ylabel("Footprints (log)")
@@ -289,29 +268,26 @@ FONT = "'TUM Neue Helvetica', 'TUMNeueHelvetica', 'Helvetica Neue', HelveticaNeu
 
 
 def pipeline_svg(numbers: dict) -> str:
-    """The OSM adapter as a pipeline of 12 steps in three rows (mm units, 190 mm wide)."""
-    removed3 = sum(numbers["removed_footprint_checks"].values())
-    removed4 = sum(numbers["removed_preprocessed_checks"].values())
+    """The adapter as nine boxes in three rows (mm units, 190 mm wide)."""
     steps = [
-        ("BEM4AI STAGE 3", "SOURCE", ["20,000 OSM footprints,", "745 cities, 27 countries,", "geometry rules applied", "at the draw"], "source"),
-        ("IMPORT", "TOOL", [f"{numbers['footprints']:,} drawn at random,", "OSM outline read again", "and checked against", "its fingerprint"], "step"),
-        ("LOCAL FRAME", "L0", ["UTM zone of the city,", "bounding-box centre at 0,", "outline repaired", "geom_local_raw"], "step"),
-        ("MAPPING CLEANUP", "L1", ["parts and holes under 1 m", "cut or filled, vertices", "within 5 cm dropped", "geom_local_clean"], "step"),
-        ("FOOTPRINT CHECKS", "ALL LEVELS", ["one polygon, sliver, area,", "holes, vertices, corners,", "thin parts at most 2 %", f"{removed3} removed"], "check"),
-        ("REVIEW LOG", "ALL LEVELS", ["manual remove or keep,", "keyed by fingerprint,", "overrides the checks", "no decisions yet"], "step"),
-        ("NORMALIZATION", "L1", ["simplify 0.2 m, short", "edges, near-collinear runs;", "area 3 %, move 0.5 m", "at most"], "step"),
-        ("ALIGNMENT", "L2", ["angle families 3°,", "wall lines 2° and 0.2 m,", "vertices snap 0.4 m", "geom_local_preray"], "step"),
-        ("THIN PARTS", "L2", ["shrink and expand 1 m:", "parts under 2 m erased,", "footprint stays one", "polygon"], "step"),
-        ("FACADE OFFSETS", "L2", ["runs at most 0.5 m apart", "and within 0.5° become", "one wall", "geom_local"], "step"),
-        ("CHECKS AGAIN", "ALL LEVELS", ["the same checks on the", "final footprint; how far", "it moved is measured", f"{removed4} removed"], "check"),
-        ("WORKING SET", "TO OSM_2", ["subset_buildings_gdf.pkl", f"{numbers['working_set']} footprints in local", "metres, to perimeter", "zoning and the engine"], "output"),
+        ("BEM4AI STAGE 3", "SOURCE", ["20,000 OSM footprints from 745 cities,", "drawn under the geometry checks", "(one polygon, area, holes,", "vertices, corners)"], "source"),
+        ("1 IMPORT", "ALL LEVELS", [f"{numbers['footprints']:,} footprints at random; the OSM", "outline read again and checked", "against BEM4AI's fingerprint;", "compared with BEM4AI's version"], "step"),
+        ("2 LOCAL FRAME", "L0", ["UTM zone of the city, the centre", "of the bounding box at (0, 0);", "nothing else changes", "geom_local_raw"], "step"),
+        ("3 VERTICES", "L1", ["duplicates within 1 cm merged,", "vertices within 5 cm of the", "outline without them dropped", "geom_local_vertices"], "step"),
+        ("4 THIN PARTS", "L1", ["parts under 2 m cut off; more", "than 2 % off, a split or an opened", "courtyard removes the footprint", f"{numbers['removed_thin_parts']} removed"], "check"),
+        ("5 ARCHITECTURAL AXES", "L2", ["wall directions within 3°,", "wall lines within 0.5 m,", "per facing side; the longest", "wall sets the line"], "step"),
+        ("6 NORMALIZATION", "L2", ["every edge onto its wall line,", "corners where the lines cross;", "kept only within 0.7 m, 5 % area,", "no new corner under 30°"], "step"),
+        ("7 CHECKS", "ALL LEVELS", ["every check of config/checks.json", "on the normalized footprint", "", f"{numbers['removed_checks']} removed"], "check"),
+        ("8 WORKING SET", "TO OSM_2", ["subset_buildings_gdf.pkl", f"{numbers['working_set']} footprints in local metres,", "to perimeter zoning and", "the convex decomposition"], "output"),
     ]
-    W, margin, cols, gap_x = 190.0, 1.0, 4, 8.0
+    W, margin, cols, gap_x = 190.0, 1.0, 3, 8.0
     bw = (W - 2 * margin - (cols - 1) * gap_x) / cols
     th, ph, gap_y = 10.0, 15.0, 9.0
     bh = th + ph
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}mm" height="{margin * 2 + 3 * bh + 2 * gap_y:.1f}mm" '
-           f'viewBox="0 0 {W} {margin * 2 + 3 * bh + 2 * gap_y:.1f}" font-family="{FONT}">',
+    rows = int(math.ceil(len(steps) / cols))
+    H = margin * 2 + rows * bh + (rows - 1) * gap_y
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}mm" height="{H:.1f}mm" viewBox="0 0 {W} {H:.1f}" '
+           f'font-family="{FONT}">',
            '<defs><marker id="chev" markerUnits="userSpaceOnUse" markerWidth="2.8" markerHeight="2.8" viewBox="0 0 10 10" '
            'refX="9.2" refY="5" orient="auto"><path d="M1.2,1 L9.2,5 L1.2,9" fill="none" stroke="#0065BD" '
            'stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></marker></defs>',
@@ -333,9 +309,9 @@ def pipeline_svg(numbers: dict) -> str:
         for i, line in enumerate(lines):
             bold = kind == "check" and i == len(lines) - 1
             weight = ' font-weight="bold" fill="#0065BD"' if bold else ' fill="black"'
-            mono = line.startswith(("geom_", "subset_"))
-            style = ' font-style="italic"' if mono else ""
+            style = ' font-style="italic"' if line.startswith(("geom_", "subset_")) else ""
             out.append(f'<text x="{x + 2.2}" y="{y + th + 3.4 + i * 3.05:.2f}" font-size="2.47"{weight}{style}>{line}</text>')
+
     def connector(points):
         (x0, y0) = points[0]
         d = "M" + " L".join(f"{px:.2f},{py:.2f}" for px, py in points)
@@ -352,6 +328,24 @@ def pipeline_svg(numbers: dict) -> str:
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------------------------- parameter study
+def parameter_study(inputs: np.ndarray) -> pd.DataFrame:
+    """Normalization of the footprints after step 4 for wall-line offset tolerances 0.2 to 0.6 m."""
+    rows = []
+    for ortho in (None, 3.0):
+        for offset in (0.2, 0.3, 0.4, 0.5, 0.6):
+            st = replace(AxesSettings(), offset_tolerance_m=offset, orthogonal_tolerance_deg=ortho,
+                         max_move_m=max(0.7, offset + 0.2))
+            res = [snap_to_axes(p, st) for p in inputs]
+            out = np.asarray([r[0] for r in res], dtype=object)
+            steps = np.array([residual_steps(p) for p in out])
+            moved = shapely.hausdorff_distance(out, inputs)
+            rows.append({"offset_m": offset, "ortho": ortho is not None, "steps": int(steps.sum()),
+                         "move_p99": float(np.quantile(moved, 0.99)),
+                         "kept": int(sum(r[1].startswith("kept") for r in res))})
+    return pd.DataFrame(rows)
+
+
 # ------------------------------------------------------------------------------------------------------ main
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -362,33 +356,38 @@ def main() -> int:
     warnings.filterwarnings("ignore")
 
     rules = load_rules()
-    settings = geometry_settings(rules)
-    raw = load_footprints(SAMPLE)
+    run = run_adapter(SAMPLE, rules, AdapterSettings())
+    gdf = run.footprints.set_index("sample_id", drop=False)
+    final = run.final.set_index("sample_id", drop=False)
+    funnel = run.funnel.set_index("sample_id", drop=False)
+
+    # The whole sample in its local frame, for the input figures.
+    from convexdecomp.osm.preprocess import bem4ai_comparison, load_sample, local_frame_step
+    raw = local_frame_step(load_sample(SAMPLE))
+    raw = raw.join(bem4ai_comparison(raw)).set_index("sample_id", drop=False)
     raw["n_vertices_raw"] = raw["geom_local_raw"].map(count_exterior_vertices)
     raw["n_reflex_raw"] = reflex_vertex_counts(raw["geom_local_raw"].to_numpy())
-    bem = gpd.read_file(SAMPLE, layer="footprints_bem4ai").set_index("sample_id").geometry
 
-    g = clean_mapping_artefacts(raw, rules, "L2")
-    c3 = check_footprints(g, "geom_local_clean", rules, FOOTPRINT_STAGE)
-    g = g.join(c3[["hard_failures", "review_flags", "thin_part_share", "min_corner_angle_deg"]])
-    removed3 = g.loc[g["hard_failures"].ne("")]
-    m = regularize_geometry(g.loc[g["hard_failures"].eq("")], "L2", settings)
-    m["geom_thin"] = [clean_polygonal_in_one_piece(p, settings.thin_part_shrink_m, settings.thin_part_shrink_m,
-                                                   settings.min_piece_area_m2)[0] for p in m["geom_local_preray"]]
-    c4 = check_footprints(m, "geom_local", rules, PREPROCESSED_STAGE)
-    m["hard_failures_final"] = c4["hard_failures"]
-    m["min_corner_final"] = c4["min_corner_angle_deg"]
-    m = m.join(fidelity(m["geom_local_raw"], m["geom_local"]).set_axis(m.index))
-    m["n_vertices_final"] = m["geom_local"].map(count_exterior_vertices)
-    m["n_reflex_final"] = reflex_vertex_counts(m["geom_local"].to_numpy())
-    m = m.set_index("sample_id", drop=False)
-    removed4 = m.loc[m["hard_failures_final"].ne("")]
-    final = m.loc[m["hard_failures_final"].eq("")]
+    # Per step: what changed, from one geometry to the next, on the footprints that passed step 4.
+    passed = gdf
+    steps = [("geom_local_raw", "geom_local_vertices", "3 vertices"), ("geom_local_vertices", "geom_local_thin", "4 thin parts"),
+             ("geom_local_thin", "geom_local", "6 normalization")]
+    step_rows = []
+    for a, b, name in steps:
+        A, B = passed[a].to_numpy(), passed[b].to_numpy()
+        sa, sb = footprint_shapes(A), footprint_shapes(B)
+        moved = shapely.hausdorff_distance(A, B)
+        area = 100 * np.abs(shapely.area(B) - shapely.area(A)) / shapely.area(A)
+        dv = sb["n_footprint_vertices"].to_numpy() - sa["n_footprint_vertices"].to_numpy()
+        ra, rb = reflex_vertex_counts(A), reflex_vertex_counts(B)
+        sharper = sb["min_corner_angle_deg"].to_numpy() < sa["min_corner_angle_deg"].to_numpy() - 5
+        step_rows.append({"step": name, "changed": int((moved > 1e-6).sum()), "vertices_removed": int(-dv[dv < 0].sum()),
+                          "vertices_added": int(dv[dv > 0].sum()), "reflex_removed": int((ra - rb)[ra > rb].sum()),
+                          "moved_over_0_3": int((moved > 0.3).sum()), "max_moved_m": round(float(moved.max()), 2),
+                          "area_over_1pct": int((area > 1).sum()), "corner_sharper_5deg": int(sharper.sum())})
 
-    # The ported mapping cleanup against BEM4AI's own cleaned footprints.
-    bem_clean = bem.reindex(g["sample_id"]).to_numpy()
-    parity = shapely.hausdorff_distance(g["geom_local_clean"].to_numpy(), bem_clean)
-
+    steps_before = np.array([residual_steps(p) for p in passed["geom_local_thin"]])
+    edges = [np.hypot(*np.diff(np.asarray(p.exterior.coords), axis=0).T).min() for p in final["geom_local"]]
     numbers = {
         "footprints": len(raw), "cities": int(raw["city_key"].nunique()), "countries": int(raw["country"].nunique()),
         "holes": raw["geom_local_raw"].map(lambda p: len(p.interiors)).value_counts().sort_index().to_dict(),
@@ -396,126 +395,92 @@ def main() -> int:
         "vertices_raw": raw["n_vertices_raw"].describe().round(2).to_dict(),
         "reflex_raw": raw["n_reflex_raw"].describe().round(2).to_dict(),
         "convex_raw": int((raw["n_reflex_raw"].eq(0) & raw["geom_local_raw"].map(lambda p: len(p.interiors) == 0)).sum()),
-        "parity_max_m": float(parity.max()),
-        "cleanup_cut": int((g["cleanup_cut_m2"] > 0).sum()), "cleanup_cut_m2": float(g["cleanup_cut_m2"].sum()),
-        "cleanup_filled": int((g["cleanup_filled_m2"] > 0).sum()),
-        "cleanup_vertices_dropped": int((g["n_osm_vertices"] - g["geom_local_clean"].map(count_exterior_vertices)).sum()),
-        "cleanup_changed": int((g["n_osm_vertices"] - g["geom_local_clean"].map(count_exterior_vertices)).gt(0).sum()),
-        "removed_footprint_checks": removed3["hard_failures"].value_counts().to_dict(),
-        "review_flags_footprint_checks": g["review_flags"].ne("").sum().item(),
-        "normalized": int((m["vertex_delta_norm"] != 0).sum()),
-        "aligned": int(m["alignment_changed"].sum()),
-        "cleanup_mode": m["cleanup_mode"].value_counts().to_dict(),
-        "facade_status": m["facade_status"].value_counts().to_dict(),
-        "removed_preprocessed_checks": removed4["hard_failures_final"].value_counts().to_dict(),
-        "removed_preprocessed_ids": removed4.index.tolist(),
-        "working_set": len(final),
-        "convex_final": int((final["n_reflex_final"].eq(0) & final["geom_local"].map(lambda p: len(p.interiors) == 0)).sum()),
-        "vertices_final": final["n_vertices_final"].describe().round(2).to_dict(),
-        "reflex_final": final["n_reflex_final"].describe().round(2).to_dict(),
+        "outlines_invalid": int((~raw["outline_valid"]).sum()),
+        "bem4ai_changed": int((raw["bem4ai_hausdorff_m"] > 1e-6).sum()),
+        "bem4ai_vertices": [int(raw["vertices_osm"].sum()), int(raw["vertices_bem4ai"].sum())],
+        "bem4ai_hausdorff_q": raw["bem4ai_hausdorff_m"].quantile([0.5, 0.9, 0.99, 1.0]).round(3).tolist(),
+        "bem4ai_area_abs_max_pct": round(float(raw["bem4ai_area_change_pct"].abs().max()), 3),
+        "vertices_removed": int(gdf["vertices_removed"].sum()) if "vertices_removed" in gdf else 0,
+        "vertices_removed_footprints": int((gdf["vertices_removed"] > 0).sum()),
+        "thin_cut": int((gdf["thin_part_share"] > 0).sum()),
+        "thin_cut_m2": float((gdf["geom_local_vertices"].map(lambda p: p.area) - gdf["geom_local_thin"].map(lambda p: p.area)).sum()),
+        "removed_thin_parts": int(funnel["left_at"].eq("thin parts").sum()),
+        "removed_thin_parts_ids": funnel.loc[funnel["left_at"].eq("thin parts"), "sample_id"].tolist(),
+        "removed_checks": int(funnel["left_at"].eq("checks").sum()),
+        "axes_status": gdf["axes_status"].value_counts().to_dict(),
+        "axes_kept_ids": gdf.loc[gdf["axes_status"].str.startswith("kept"), "sample_id"].tolist(),
+        "directions_mean": round(float(gdf["n_directions"].mean()), 2), "lines_mean": round(float(gdf["n_wall_lines"].mean()), 2),
+        "steps_before_axes": [int(steps_before.sum()), int((steps_before > 0).sum())],
+        "steps_after_axes": int(final["residual_steps"].sum()),
+        "working_set": len(run.working_set),
+        "convex_final": int((final["n_reflex"].eq(0) & final["geom_local"].map(lambda p: len(p.interiors) == 0)).sum()),
+        "reflex_mean": [round(float(final["n_reflex_raw"].mean()), 2), round(float(final["n_reflex"].mean()), 2)],
+        "vertices_median": [int(final["geom_local_raw"].map(count_exterior_vertices).median()),
+                            int(final["geom_local"].map(count_exterior_vertices).median())],
         "hausdorff_q": final["fidelity_hausdorff_m"].quantile([0.5, 0.9, 0.99, 1.0]).round(3).tolist(),
         "area_change_abs_q": final["fidelity_area_change_pct"].abs().quantile([0.5, 0.9, 0.99, 1.0]).round(2).tolist(),
         "iou_min": round(float(final["fidelity_iou"].min()), 4),
         "moved_over_0_5": int((final["fidelity_hausdorff_m"] > 0.5).sum()),
         "moved_over_1": int((final["fidelity_hausdorff_m"] > 1.0).sum()),
+        "shortest_edge_m": round(float(min(edges)), 3),
+        "steps": step_rows,
     }
-
-    # Per step: what changed, from one geometry to the next.
-    steps = [("geom_local_raw", "geom_local_clean", "mapping cleanup"), ("geom_local_clean", "geometry_before_align", "normalization"),
-             ("geometry_before_align", "geom_local_preray", "alignment"), ("geom_local_preray", "geom_thin", "thin parts"),
-             ("geom_thin", "geom_local", "facade offsets")]
-    rows = []
-    for a, b, name in steps:
-        A, B = m[a].to_numpy(), m[b].to_numpy()
-        sa, sb = footprint_shapes(A), footprint_shapes(B)
-        ra, rb = reflex_vertex_counts(A), reflex_vertex_counts(B)
-        moved = shapely.hausdorff_distance(A, B)
-        area = 100 * np.abs(shapely.area(B) - shapely.area(A)) / shapely.area(A)
-        dv = sb["n_footprint_vertices"].to_numpy() - sa["n_footprint_vertices"].to_numpy()
-        sharper = (sb["min_corner_angle_deg"].to_numpy() < sa["min_corner_angle_deg"].to_numpy() - 5)
-        rows.append({"step": name, "changed": int((moved > 1e-6).sum()), "vertices_removed": int(-dv[dv < 0].sum()),
-                     "vertices_added": int(dv[dv > 0].sum()), "reflex_removed": int((ra - rb)[ra > rb].sum()),
-                     "moved_over_0_3": int((moved > 0.3).sum()), "max_moved_m": round(float(moved.max()), 2),
-                     "area_over_1pct": int((area > 1).sum()), "corner_sharper_5deg": int(sharper.sum())})
-    numbers["steps"] = rows
+    study = parameter_study(passed["geom_local_thin"].to_numpy())
+    numbers["parameter_study"] = study.round(3).to_dict(orient="records")
     (args.out / "osm_adapter_numbers.json").write_text(json.dumps(numbers, indent=1, default=str))
-    print(json.dumps(numbers, indent=1, default=str))
+    print(json.dumps({k: v for k, v in numbers.items() if k not in ("steps", "parameter_study")}, indent=1, default=str))
+    print(pd.DataFrame(step_rows).to_string(index=False))
+    print(study.round(3).to_string(index=False))
 
     # ----- figures
     (args.out / "osm_adapter_pipeline.svg").write_text(pipeline_svg(numbers))
     print("wrote osm_adapter_pipeline")
-    types = pd.read_csv(args.types).set_index("sample_id")["building_type"] if args.types else None
-    if types is not None:
-        fig_sample_overview(raw, types.reindex(raw["sample_id"]).dropna(), args.out)
+    types = pd.read_csv(args.types).set_index("sample_id")["building_type"].reindex(raw.index).dropna() if args.types else None
+    fig_sample_overview(raw, types, args.out)
     fig_gallery(raw, args.out)
 
-    # BEM4AI Stage 3 mapping cleanup: the largest cuts and the most vertices dropped.
-    g2 = g.set_index("sample_id", drop=False)
-    g2["dropped"] = g2["n_osm_vertices"] - g2["geom_local_clean"].map(count_exterior_vertices)
-    cut_ids = g2.sort_values("cleanup_cut_m2", ascending=False).index[:4].tolist()
-    drop_ids = g2.loc[~g2.index.isin(cut_ids)].sort_values("dropped", ascending=False).index[:4].tolist()
-    fig_before_after(g2.loc[cut_ids + drop_ids], "geom_local_raw", "geom_local_clean", args.out, "osm_mapping_cleanup",
-                     lambda sid, r: f"{sid}\ncut {r['cleanup_cut_m2']:.1f} m², {int(r['dropped'])} vertices dropped")
+    changed = raw.loc[raw["bem4ai_hausdorff_m"] > 1e-6]
+    bem_ids = changed.sort_values("bem4ai_hausdorff_m", ascending=False).index[:4].tolist() + \
+        changed.assign(dv=changed["vertices_osm"] - changed["vertices_bem4ai"]).sort_values("dv", ascending=False).index[:4].tolist()
+    bem_ids = list(dict.fromkeys(bem_ids))[:8]
+    fig_before_after(raw.loc[bem_ids], "geom_local_raw", "geom_local_bem4ai", args.out, "osm_bem4ai_comparison",
+                     lambda sid, r: f"{sid}\n{r['vertices_osm']} → {r['vertices_bem4ai']} vertices, moved {r['bem4ai_hausdorff_m']:.2f} m")
 
-    # The footprints the thin-part check removes.
-    thin = g2.loc[g2["hard_failures"].str.contains("footprint_thin_parts")].sort_values("thin_part_share", ascending=False)
-    thin = thin.assign(opened=[clean_polygonal(p, settings.thin_part_shrink_m, settings.thin_part_shrink_m, 2.0)
-                               for p in thin["geom_local_clean"]])
-    fig_before_after(thin, "geom_local_clean", "opened", args.out, "osm_thin_part_check", dots=False,
-                     titles=lambda sid, r: f"{sid}\nloses {r['thin_part_share']:.1%}")
+    v_ids = gdf.sort_values("vertices_removed", ascending=False).index[:8].tolist()
+    fig_before_after(gdf.loc[v_ids], "geom_local_raw", "geom_local_vertices", args.out, "osm_vertices_examples",
+                     lambda sid, r: f"{sid}\n{count_exterior_vertices(r['geom_local_raw'])} → "
+                                    f"{count_exterior_vertices(r['geom_local_vertices'])} vertices")
 
-    # Normalization: the largest vertex reductions, and the corners it sharpens.
-    norm_ok = m.loc[m["vertex_delta_norm"] < 0].sort_values("vertex_delta_norm", kind="stable").index[:4].tolist()
-    norm_issue = [sid for sid in ("Torun_0010", "Paris_0081", "Paris_0079", "Leon_0011") if sid in m.index]
-    fig_before_after(m.loc[norm_ok], "geom_local_clean", "geometry_before_align", args.out, "osm_normalization_examples",
-                     lambda sid, r: f"{sid}\n{count_exterior_vertices(r['geom_local_clean'])} → "
-                                    f"{count_exterior_vertices(r['geometry_before_align'])} vertices")
-    marks = {sid: sharpest_corner_point(m.at[sid, "geometry_before_align"])[0] for sid in norm_issue}
-    fig_before_after(m.loc[norm_issue], "geom_local_clean", "geometry_before_align", args.out, "osm_normalization_issues",
-                     lambda sid, r: f"{sid}\nsharpest corner {sharpest_corner_point(r['geom_local_clean'])[1]:.0f}° → "
-                                    f"{sharpest_corner_point(r['geometry_before_align'])[1]:.0f}°", marks=marks)
+    # The footprints the thin-part check removes: their state before step 4 and the cut.
+    from convexdecomp.osm.preprocess import thin_parts_step, vertices_step
+    removed = raw.loc[numbers["removed_thin_parts_ids"]]
+    removed = thin_parts_step(vertices_step(removed, AdapterSettings()), rules, AdapterSettings()).set_index("sample_id", drop=False)
+    removed = removed.sort_values("thin_part_share", ascending=False)
+    fig_before_after(removed, "geom_local_vertices", "geom_local_thin", args.out, "osm_thin_part_check", dots=False, ncols=4,
+                     titles=lambda sid, r: f"{sid}\n{r['thin_part_share']:.1%} off" + (", split or courtyard opened"
+                                                                                      if r["thin_part_topology_changed"] else ""))
+    cut = gdf.assign(cut_m2=gdf["geom_local_vertices"].map(lambda p: p.area) - gdf["geom_local_thin"].map(lambda p: p.area))
+    t_ids = cut.loc[cut["cut_m2"] > 0].sort_values("cut_m2", ascending=False).index[:8].tolist()
+    fig_before_after(cut.loc[t_ids], "geom_local_vertices", "geom_local_thin", args.out, "osm_thin_parts_examples",
+                     lambda sid, r: f"{sid}\n{r['cut_m2']:.1f} m² cut ({r['thin_part_share']:.1%})")
 
-    # Alignment: angle families and lines.
-    m["align_moved"] = shapely.hausdorff_distance(m["geometry_before_align"].to_numpy(), m["geom_local_preray"].to_numpy())
-    pool = m.loc[m["n_angle_families_align"].between(2, 4)
-                 & m["geometry_before_align"].map(count_exterior_vertices).between(8, 20)]
-    align_ids = pool.sort_values("align_moved", ascending=False).index[:4].tolist()
-    fig_alignment_axes(m, align_ids, settings.alignment, args.out)
-
-    # Thin parts: stubs erased, and the debris the shrink and expand leaves.
-    lost = (shapely.area(m["geom_local_preray"].to_numpy()) - shapely.area(m["geom_thin"].to_numpy()))
-    m["thin_lost_m2"] = lost
-    stub_ids = m.loc[m["thin_lost_m2"] > 0.5].sort_values("thin_lost_m2", ascending=False).index[:4].tolist()
-    fig_before_after(m.loc[stub_ids], "geom_local_preray", "geom_thin", args.out, "osm_thin_parts_examples",
-                     lambda sid, r: f"{sid}\n{r['thin_lost_m2']:.1f} m² erased")
-    debris = [sid for sid in ("Saint_Etienne_0001", "Rzeszow_0026", "Corby_0008") if sid in m.index]
-    dmarks = {sid: sharpest_corner_point(m.at[sid, "geom_thin"])[0] for sid in debris}
-    fig_before_after(m.loc[debris], "geom_local_preray", "geom_thin", args.out, "osm_thin_parts_debris", ncols=3,
-                     titles=lambda sid, r: f"{sid}\nsharpest corner {sharpest_corner_point(r['geom_local_preray'])[1]:.0f}° → "
-                                           f"{sharpest_corner_point(r['geom_thin'])[1]:.0f}°, "
-                                           f"shortest edge {shortest_edge(r['geom_thin']):.0e} m", marks=dmarks, size=2.4)
-
-    # Facade offsets: the largest moves.
-    fo = m.loc[m["facade_status"].eq("closed")].copy()
-    fo["moved"] = shapely.hausdorff_distance(fo["geom_thin"].to_numpy(), fo["geom_local"].to_numpy())
-    fo_ids = fo.sort_values("moved", ascending=False).index[:4].tolist()
-    fig_before_after(fo.loc[fo_ids], "geom_thin", "geom_local", args.out, "osm_facade_offsets_examples",
-                     lambda sid, r: f"{sid}\nmoved {r['moved']:.2f} m")
-
-    # The footprints the checks remove after preprocessing.
-    rmarks = {sid: sharpest_corner_point(m.at[sid, "geom_local"])[0] for sid in removed4.index}
-    fig_before_after(m.loc[removed4.index], "geom_local_raw", "geom_local", args.out, "osm_preprocessed_check_removals",
-                     lambda sid, r: f"{sid}: {r['hard_failures_final']}\nsharpest corner {r['min_corner_final']:.0f}°",
-                     ncols=2, marks=rmarks, size=2.4)
-
+    moved = gdf.assign(axes_moved=shapely.hausdorff_distance(gdf["geom_local_thin"].to_numpy(), gdf["geom_local"].to_numpy()))
+    a_pool = moved.loc[moved["n_directions"].between(2, 4) & moved["geom_local_thin"].map(count_exterior_vertices).between(8, 20)]
+    a_ids = a_pool.sort_values("axes_moved", ascending=False).index[:4].tolist()
+    fig_axes(moved.loc[a_ids], args.out, AdapterSettings().axes)
+    n_ids = moved.sort_values("axes_moved", ascending=False).index[:8].tolist()
+    fig_before_after(moved.loc[n_ids], "geom_local_thin", "geom_local", args.out, "osm_normalization_examples",
+                     lambda sid, r: f"{sid}\n{count_exterior_vertices(r['geom_local_thin'])} → "
+                                    f"{count_exterior_vertices(r['geom_local'])} vertices, moved {r['axes_moved']:.2f} m")
+    fig_parameter_study(study, args.out)
     fig_fidelity(final, args.out)
     seq = list(dict.fromkeys([
         final.sort_values("fidelity_hausdorff_m", ascending=False).index[0],
-        "Torun_0010" if "Torun_0010" in final.index else final.index[1],
+        moved.loc[final.index].sort_values("axes_moved", ascending=False).index[0],
         final.loc[final["geom_local"].map(lambda p: len(p.interiors) > 0)].index[0],
-        final.iloc[(final["n_reflex_final"] - 4).abs().argsort()].index[0],
+        final.iloc[(final["n_reflex"] - 4).abs().argsort()].index[0],
     ]))
-    fig_stage_sequence(m, seq, args.out)
+    fig_stage_sequence(gdf, seq, args.out)
     fig_working_set_complexity(final, args.out)
     return 0
 

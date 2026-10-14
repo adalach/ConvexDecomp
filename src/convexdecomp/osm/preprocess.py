@@ -1,244 +1,232 @@
-"""The steps of ``OSM_1_Preprocessing.ipynb``: from an OSM footprint set to the decomposition working set.
+"""The OSM adapter: from a sample of BEM4AI footprints to the working set of the convex decomposition.
 
-The steps and their tables follow BEM4AI: the mapping cleanup and footprint checks of its Stage 3,
-the review log, and the main-footprint geometry of its Stage 4 (``helpers/local_frames.py``). Each
-footprint carries one geometry column per step (`convexdecomp.osm.local_frames`), so every step can
-be compared with the outline it started from.
+| Step | From level | Function | Writes |
+| --- | --- | --- | --- |
+| 1 Import | all | `load_sample`, `bem4ai_comparison` | the OSM outline (WGS84) and BEM4AI's version of it |
+| 2 Local frame | all (L0) | `local_frame_step` | ``geom_local_raw``: metres, bounding-box centre at (0, 0) |
+| 3 Vertices | L1 | `vertices_step` | ``geom_local_vertices``: duplicate and collinear vertices dropped |
+| 4 Thin parts | L1 | `thin_parts_step`, then the check ``footprint_thin_parts`` | ``geom_local_thin`` |
+| 5 Axes | L2 | `axes_step` | the architectural axes of each footprint (``axes``) |
+| 6 Normalization | L2 | `normalization_step` | ``geom_local``: the outline on its axes |
+| 7 Checks | all | `check_footprints` with every check of ``config/checks.json`` | the checks table |
+| 8 Working set | all | `working_set` | ``subset_buildings_gdf`` for ``OSM_2_Decomposition.ipynb`` |
 
-How far the geometry is changed is set by the preprocessing level (`LEVELS`):
-
-| Level | Steps |
-| --- | --- |
-| ``L0`` | metric scale and local coordinates only: the outline as it arrived, repaired |
-| ``L1`` | + the mapping cleanup (parts and holes thinner than ``footprint_cleanup.thin_part_max_width_m`` and vertices within ``footprint_cleanup.collinear_tolerance_m``) and the normalization (duplicate vertices, short edges, near-collinear runs) |
-| ``L2`` | + edge alignment, erasing parts thinner than twice the shrink distance, closing facade offsets |
-
-The checks of ``config/checks.json`` run at every level.
+Every step keeps its own geometry column, so each footprint can be compared with the outline it
+started from; below the level a step belongs to, it hands its input on unchanged. `run_adapter` runs
+them all and records in a funnel where each footprint leaves and why.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyogrio
 import shapely
-from shapely.geometry import MultiPolygon
 
 from convexdecomp.core.convexity import convexity_mask
-from convexdecomp.osm.axis_alignment import EdgeAlignmentConfig, align_buildings_gdf
-from convexdecomp.osm.footprints import (CLEANUP_COLUMNS, FootprintCleanup, clean_footprints, footprint_fingerprint,
-                                         footprint_shapes, make_geometry_valid, thin_part_shares)
-from convexdecomp.osm.local_frames import (FacadeOffsetConfig, clean_polygonal_in_one_piece, close_facade_offsets,
-                                           sync_geometry)
-from convexdecomp.osm.normalize import FootprintNormalizationConfig, count_exterior_vertices, normalize_buildings_gdf
-from convexdecomp.osm.review_log import footprint_identity, mark_states
+from convexdecomp.osm.axes import AxesSettings, find_axes, residual_steps, snap_to_axes
+from convexdecomp.osm.footprints import footprint_fingerprint, footprint_shapes, thin_hole_counts
+from convexdecomp.osm.local_frames import sync_geometry, to_local_frames
+from convexdecomp.osm.normalize import count_exterior_vertices
 from convexdecomp.osm.rules import Rules
+from convexdecomp.osm.thin_parts import THIN_PART_COLUMNS, erase_thin_parts
+from convexdecomp.osm.vertices import VertexCleanup, remove_redundant_vertices
 
 __all__ = [
     "IDENTITY_COLUMNS",
     "LEVELS",
     "WORKING_SET_COLUMNS",
-    "GeometrySettings",
+    "AdapterRun",
+    "AdapterSettings",
+    "axes_step",
+    "bem4ai_comparison",
     "check_footprints",
-    "clean_mapping_artefacts",
     "fidelity",
-    "load_footprints",
+    "load_sample",
+    "local_frame_step",
+    "normalization_step",
     "reflex_vertex_counts",
-    "regularize_geometry",
-    "review_removals",
+    "run_adapter",
     "summarize_checks",
+    "thin_parts_step",
+    "vertices_step",
     "working_set",
 ]
 
 LEVELS = ("L0", "L1", "L2")
 #: The columns that name a footprint in every table, as in BEM4AI's checks tables.
 IDENTITY_COLUMNS = ("sample_id", "source_sample_id", "footprint_fingerprint")
-_OVERLAY_GRID_M = 1e-6
 #: The columns of the working table ``OSM_2_Decomposition.ipynb`` reads.
 WORKING_SET_COLUMNS = ("sample_id", "geometry", "area_m2", "n_vertices", "n_holes")
+_OVERLAY_GRID_M = 1e-6
 
 
-def _level_at_least(level: str, minimum: str) -> bool:
+@dataclass(frozen=True)
+class AdapterSettings:
+    """The preprocessing level, the settings of the vertex cleanup and the axes, and the working-set rule."""
+
+    level: str = "L2"
+    vertices: VertexCleanup = field(default_factory=lambda: VertexCleanup(0.01, 0.05))
+    axes: AxesSettings = field(default_factory=AxesSettings)
+    #: ``"all"``: every footprint that passes the checks; ``"paper"``: non-convex with 6 to 32 vertices.
+    working_set_rule: str = "all"
+
+
+def _at_least(level: str, minimum: str) -> bool:
     if level not in LEVELS:
         raise ValueError(f"Unknown preprocessing level {level!r}; expected one of {LEVELS}.")
     return LEVELS.index(level) >= LEVELS.index(minimum)
 
 
-def _single_part(geom):
-    """A MultiPolygon of one part as that Polygon; anything else as it is."""
-    if isinstance(geom, MultiPolygon):
-        parts = [part for part in geom.geoms if not part.is_empty]
-        if len(parts) == 1:
-            return parts[0]
-    return geom
+def _step(gdf: gpd.GeoDataFrame, source: str, target: str, values) -> gpd.GeoDataFrame:
+    out = gdf.copy()
+    out[target] = pd.Series(list(values) if values is not None else list(out[source]), index=out.index, dtype=object)
+    return sync_geometry(out, target)
 
 
-# --------------------------------------------------------------------------------------------------- loading
-def load_footprints(path: str | Path, layer: str = "footprints") -> gpd.GeoDataFrame:
-    """A footprint set in local metres, with the identity and frame columns of BEM4AI's tables.
+# ---------------------------------------------------------------------------------------------- 1 import
+def load_sample(path: str | Path, layer: str = "footprints", bem4ai_layer: str = "footprints_bem4ai") -> gpd.GeoDataFrame:
+    """The footprints of a sample as mapped, with BEM4AI's version of each as ``geometry_bem4ai`` when the file has it.
 
-    The file needs ``sample_id`` and the footprints in local metres; any other column is kept. Where
-    they are missing, ``source_sample_id`` is the ``sample_id`` and ``footprint_fingerprint`` the
-    fingerprint of the repaired outline (`footprint_fingerprint`, in metres). Each outline is
-    repaired (`make_geometry_valid`), a MultiPolygon of one part becomes a Polygon, and the result is
-    ``geom_local_raw``. Local frames have no CRS, so any CRS label of the file is dropped.
+    ``outline_valid`` says whether the outline is a valid polygon as mapped; it is not repaired.
+    A set without ``source_sample_id`` or ``footprint_fingerprint`` gets them from its ``sample_id``
+    and its outline.
     """
     gdf = gpd.read_file(path, layer=layer)
-    raw = [_single_part(make_geometry_valid(_single_part(geom))) for geom in gdf.geometry]
-    frame = pd.DataFrame(gdf.drop(columns=gdf.geometry.name))
-    frame["sample_id"] = frame["sample_id"].astype(str)
-    if "source_sample_id" not in frame.columns:
-        frame["source_sample_id"] = frame["sample_id"]
-    if "footprint_fingerprint" not in frame.columns:
-        frame["footprint_fingerprint"] = [footprint_fingerprint(geom) for geom in raw]
-    frame["geom_local_raw"] = pd.Series(raw, index=frame.index, dtype=object)
+    gdf["sample_id"] = gdf["sample_id"].astype(str)
+    if bem4ai_layer in [name for name, _ in pyogrio.list_layers(path)]:
+        bem = gpd.read_file(path, layer=bem4ai_layer).set_index("sample_id").geometry
+        gdf["geometry_bem4ai"] = gpd.GeoSeries(bem.reindex(gdf["sample_id"]).to_numpy(), index=gdf.index, crs=gdf.crs)
+    if "source_sample_id" not in gdf.columns:
+        gdf["source_sample_id"] = gdf["sample_id"]
+    if "footprint_fingerprint" not in gdf.columns:
+        gdf["footprint_fingerprint"] = [footprint_fingerprint(geom) for geom in gdf.geometry]
+    gdf["outline_valid"] = gdf.geometry.is_valid.to_numpy()
     leading = [*IDENTITY_COLUMNS]
-    frame = frame[leading + [column for column in frame.columns if column not in leading]]
-    return sync_geometry(gpd.GeoDataFrame(frame, geometry=frame["geom_local_raw"].to_numpy(), crs=None),
-                         "geom_local_raw")
+    return gdf[leading + [c for c in gdf.columns if c not in leading]]
 
 
-# ------------------------------------------------------------------------------------------------- footprints
-def clean_mapping_artefacts(gdf: gpd.GeoDataFrame, rules: Rules, level: str) -> gpd.GeoDataFrame:
-    """The mapping cleanup of BEM4AI Stage 3 (`clean_footprints`) from L1 on: ``geom_local_clean`` and `CLEANUP_COLUMNS`.
+def bem4ai_comparison(gdf: pd.DataFrame) -> pd.DataFrame:
+    """How BEM4AI's version of each footprint differs from the OSM outline, both in the local frame.
 
-    At L0 the outline stays as it arrived and the report records no change.
+    ``vertices_osm`` and ``vertices_bem4ai`` (exterior), ``bem4ai_hausdorff_m`` and ``bem4ai_area_change_pct``.
     """
-    out = gdf.copy()
-    raw = out["geom_local_raw"].to_numpy()
-    if _level_at_least(level, "L1"):
-        cleaned, report = clean_footprints(raw, FootprintCleanup.from_thresholds(rules.thresholds))
-    else:
-        cleaned = raw.copy()
-        report = pd.DataFrame({"n_osm_vertices": [count_exterior_vertices(geom) for geom in raw],
-                               "cleanup_filled_m2": 0.0, "cleanup_cut_m2": 0.0})
-    out["geom_local_clean"] = pd.Series(list(cleaned), index=out.index, dtype=object)
-    for column in CLEANUP_COLUMNS:
+    raw, bem = gdf["geom_local_raw"].to_numpy(), gdf["geom_local_bem4ai"].to_numpy()
+    return pd.DataFrame({
+        "vertices_osm": [count_exterior_vertices(g) for g in raw],
+        "vertices_bem4ai": [count_exterior_vertices(g) for g in bem],
+        "bem4ai_hausdorff_m": shapely.hausdorff_distance(raw, bem),
+        "bem4ai_area_change_pct": 100.0 * (shapely.area(bem) - shapely.area(raw)) / shapely.area(raw),
+    }, index=gdf.index)
+
+
+# ----------------------------------------------------------------------------------------- 2 local frame
+def local_frame_step(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Every footprint in metres with the centre of its bounding box at (0, 0): ``geom_local_raw`` (and ``geom_local_bem4ai``)."""
+    columns = {"geometry": "geom_local_raw"}
+    if "geometry_bem4ai" in gdf.columns:
+        columns["geometry_bem4ai"] = "geom_local_bem4ai"
+    return to_local_frames(gdf, columns)
+
+
+# ------------------------------------------------------------------------------------------- 3 vertices
+def vertices_step(gdf: gpd.GeoDataFrame, settings: AdapterSettings) -> gpd.GeoDataFrame:
+    """Duplicate and collinear vertices dropped (L1): ``geom_local_vertices`` and ``vertices_removed``."""
+    if not _at_least(settings.level, "L1"):
+        out = _step(gdf, "geom_local_raw", "geom_local_vertices", None)
+        out["vertices_removed"] = 0
+        return out
+    cleaned = [remove_redundant_vertices(geom, settings.vertices) for geom in gdf["geom_local_raw"]]
+    out = _step(gdf, "geom_local_raw", "geom_local_vertices", [g for g, _ in cleaned])
+    out["vertices_removed"] = [n for _, n in cleaned]
+    return out
+
+
+# ----------------------------------------------------------------------------------------- 4 thin parts
+def thin_parts_step(gdf: gpd.GeoDataFrame, rules: Rules, settings: AdapterSettings) -> gpd.GeoDataFrame:
+    """Parts narrower than ``footprint.thin_part_width_m`` erased (L1): ``geom_local_thin`` and `THIN_PART_COLUMNS`."""
+    if not _at_least(settings.level, "L1"):
+        return _step(gdf, "geom_local_vertices", "geom_local_thin", None)
+    width = float(rules.thresholds["footprint"]["thin_part_width_m"])
+    erased, report = erase_thin_parts(gdf["geom_local_vertices"].to_numpy(), width, settings.vertices)
+    out = _step(gdf, "geom_local_vertices", "geom_local_thin", erased)
+    for column in THIN_PART_COLUMNS:
         out[column] = report[column].to_numpy()
-    return sync_geometry(out, "geom_local_clean")
+    return out
 
 
-def check_footprints(gdf: gpd.GeoDataFrame, geometry_col: str, rules: Rules, stage: int) -> pd.DataFrame:
-    """The checks table of one stage, as BEM4AI writes ``checks_stage<N>.csv``.
+# ------------------------------------------------------------------------------------------------ 5 axes
+def axes_step(gdf: gpd.GeoDataFrame, settings: AdapterSettings) -> gpd.GeoDataFrame:
+    """The architectural axes of each footprint (L2): ``axes``, ``n_directions`` and ``n_wall_lines``."""
+    out = gdf.copy()
+    if not _at_least(settings.level, "L2"):
+        out["axes"] = None
+        return out
+    axes = [find_axes(geom, settings.axes) if geom.geom_type == "Polygon" else None for geom in out["geom_local_thin"]]
+    out["axes"] = pd.Series(axes, index=out.index, dtype=object)
+    out["n_directions"] = [len(a.directions) if a is not None else 0 for a in axes]
+    out["n_wall_lines"] = [len(a.lines) if a is not None else 0 for a in axes]
+    return out
+
+
+# --------------------------------------------------------------------------------------- 6 normalization
+def normalization_step(gdf: gpd.GeoDataFrame, settings: AdapterSettings) -> gpd.GeoDataFrame:
+    """The outline moved onto its axes (L2): ``geom_local`` and ``axes_status`` (`snap_to_axes`)."""
+    if not _at_least(settings.level, "L2"):
+        out = _step(gdf, "geom_local_thin", "geom_local", None)
+        out["axes_status"] = "off"
+        return out
+    snapped = [snap_to_axes(geom, settings.axes, axes) for geom, axes in zip(gdf["geom_local_thin"], gdf["axes"])]
+    out = _step(gdf, "geom_local_thin", "geom_local", [g for g, _, _ in snapped])
+    out["axes_status"] = [status for _, status, _ in snapped]
+    return out
+
+
+# ---------------------------------------------------------------------------------------------- checks
+def check_footprints(gdf: gpd.GeoDataFrame, geometry_col: str, rules: Rules, names=None) -> pd.DataFrame:
+    """The checks table of `geometry_col`, as BEM4AI writes ``checks_stage<N>.csv``.
 
     One row per footprint: the identity columns (the fingerprint as ``fingerprint``), the
-    measurements (`footprint_shapes`, and ``thin_part_share``: the share of the area the shrink and expand by
-    half of ``footprint.thin_part_width_m`` takes off), the
-    failed checks of each kind (``hard_failures``, ``review_flags``, ``rerun_flags``) and
-    ``written_at``.
+    measurements (`footprint_shapes`, ``n_thin_holes``, and the thin-part report when the frame has
+    it), the failed checks of each kind (``hard_failures``, ``review_flags``, ``rerun_flags``) and
+    ``written_at``. With `names`, only those checks are evaluated.
     """
     geometries = gdf[geometry_col].to_numpy()
     measured = footprint_shapes(geometries)
-    measured["thin_part_share"] = thin_part_shares(geometries, float(rules.thresholds["footprint"]["thin_part_width_m"]))
+    measured["n_thin_holes"] = thin_hole_counts(geometries, float(rules.thresholds["footprint"]["thin_hole_width_m"]))
     measured.index = gdf.index
+    for column in THIN_PART_COLUMNS:
+        if column in gdf.columns:
+            measured[column] = gdf[column]
     table = pd.concat([
         gdf[["sample_id", "source_sample_id"]].astype(str),
         gdf["footprint_fingerprint"].astype(str).rename("fingerprint"),
         measured,
-        rules.evaluate(measured, stage),
+        rules.evaluate(measured, names=names),
     ], axis=1)
     table["written_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return table
 
 
-def summarize_checks(checks: pd.DataFrame, rules: Rules, stage: int) -> pd.DataFrame:
-    """Per check that runs at `stage` on the measurements of `checks`: its kind, rule and how many footprints fail it."""
+def summarize_checks(checks: pd.DataFrame, rules: Rules, names=None) -> pd.DataFrame:
+    """Per check evaluated on `checks`: its kind, rule and how many footprints fail it."""
     flag_column = {"remove": "hard_failures", "review": "review_flags", "rerun": "rerun_flags"}
     rows = []
-    for check in rules.available(checks.columns, stage):
-        failing = checks[flag_column[check.kind]].str.split(";").map(lambda names, name=check.name: name in names)
+    for check in rules.available(checks.columns, names=names):
+        failing = checks[flag_column[check.kind]].str.split(";").map(lambda found, name=check.name: name in found)
         rows.append({"check": check.name, "kind": check.kind, "rule": check.rule(rules.thresholds),
                      "failing": int(failing.sum())})
     return pd.DataFrame(rows)
 
 
-def review_removals(checks: pd.DataFrame, gdf: gpd.GeoDataFrame, log_path: str | Path,
-                    remove_check_selections: bool) -> pd.DataFrame:
-    """What leaves at a checks stage, and why, on the index of `checks`.
-
-    As in BEM4AI: a footprint failing a ``remove`` check leaves (``check_hard``), one removed in the
-    review log leaves (``manual``), and one a ``review`` check selected leaves only with
-    `remove_check_selections` (``check_review``). A ``keep`` in the review log overrides the checks.
-    Decisions apply while the footprint has the fingerprint they were made with.
-
-    Returns ``removed_by`` (``check_hard``, ``manual``, ``check_review`` or "") and ``removal_reason``
-    (the checks' names, or the log's note).
-    """
-    states = mark_states("footprints", footprint_identity(gdf), log_path)
-    applying = states.loc[states["state"].eq("applies")].set_index("source_sample_id")
-    decision = gdf["source_sample_id"].astype(str).map(applying["decision"]).fillna("")
-    note = gdf["source_sample_id"].astype(str).map(applying["note"]).fillna("")
-    kept = decision.eq("keep")
-
-    removed_by = pd.Series("", index=checks.index, dtype=object)
-    reason = pd.Series("", index=checks.index, dtype=object)
-    hard = checks["hard_failures"].ne("") & ~kept
-    removed_by[hard], reason[hard] = "check_hard", checks.loc[hard, "hard_failures"]
-    manual = decision.eq("remove") & removed_by.eq("")
-    removed_by[manual], reason[manual] = "manual", note[manual].where(note[manual].ne(""), "manual")
-    if remove_check_selections:
-        selected = checks["review_flags"].ne("") & ~kept & removed_by.eq("")
-        removed_by[selected], reason[selected] = "check_review", checks.loc[selected, "review_flags"]
-    return pd.DataFrame({"removed_by": removed_by, "removal_reason": reason})
-
-
-# --------------------------------------------------------------------------------------------------- geometry
-@dataclass(frozen=True)
-class GeometrySettings:
-    """The settings of the geometry steps (BEM4AI Stage 4, main footprints)."""
-
-    normalization: FootprintNormalizationConfig
-    alignment: EdgeAlignmentConfig
-    #: Parts narrower than twice this are erased (shrink and expand by it, mitre joins).
-    thin_part_shrink_m: float
-    facade_offsets: FacadeOffsetConfig
-    #: Pieces below this are dropped by the thin-part cleanup.
-    min_piece_area_m2: float = 2.0
-
-
-def regularize_geometry(gdf: gpd.GeoDataFrame, level: str, settings: GeometrySettings) -> gpd.GeoDataFrame:
-    """The geometry steps of the level, from ``geom_local_clean`` to ``geom_local_preray`` and ``geom_local``.
-
-    L1 normalizes (`normalize_buildings_gdf`); L2 also aligns the edges (`align_buildings_gdf`),
-    erases the parts thinner than twice ``settings.thin_part_shrink_m`` while keeping the footprint
-    one polygon (`clean_polygonal_in_one_piece`, ``cleanup_mode``) and closes the facade offsets
-    (`close_facade_offsets`, ``facade_status`` and ``facade_area_change_m2``). The normalization and
-    alignment diagnostics (``vertex_delta_norm``, ``alignment_changed``, ...) are kept.
-    """
-    work = sync_geometry(gdf.copy(), "geom_local_clean")
-    if _level_at_least(level, "L1"):
-        work = normalize_buildings_gdf(work, geometry_col="geometry", cfg=settings.normalization)
-    if _level_at_least(level, "L2"):
-        work["geometry_before_align"] = work["geometry"]
-        work = align_buildings_gdf(work, geometry_col="geometry", cfg=settings.alignment)
-    work["geom_local_preray"] = pd.Series(list(work["geometry"]), index=work.index, dtype=object)
-
-    if _level_at_least(level, "L2"):
-        thin = [clean_polygonal_in_one_piece(geom, settings.thin_part_shrink_m, settings.thin_part_shrink_m,
-                                             settings.min_piece_area_m2) for geom in work["geom_local_preray"]]
-        facade = [close_facade_offsets(geom, settings.facade_offsets) for geom, _ in thin]
-        work["cleanup_mode"] = [mode for _, mode in thin]
-        work["facade_status"] = [info["status"] for _, info in facade]
-        work["facade_area_change_m2"] = [info["area_change_m2"] for _, info in facade]
-        final = [geom for geom, _ in facade]
-    else:
-        work["cleanup_mode"] = "off"
-        work["facade_status"] = "off"
-        work["facade_area_change_m2"] = 0.0
-        final = list(work["geom_local_preray"])
-    work["geom_local"] = pd.Series(final, index=work.index, dtype=object)
-    return sync_geometry(work, "geom_local")
-
-
+# ---------------------------------------------------------------------------------------------- measures
 def reflex_vertex_counts(geometries, tol_deg: float = 1.0) -> np.ndarray:
-    """The reflex corners of each outline: turns against the ring's orientation by more than `tol_deg`.
-
-    The exterior ring only; a footprint that is no single polygon counts 0.
-    """
+    """The reflex corners of each outline: turns against the ring's orientation by more than `tol_deg` (exterior only)."""
     counts = np.zeros(len(geometries), dtype=int)
     for k, geom in enumerate(geometries):
         if geom is None or geom.geom_type != "Polygon" or geom.is_empty:
@@ -272,14 +260,14 @@ def fidelity(raw, final) -> pd.DataFrame:
         })
 
 
-# ------------------------------------------------------------------------------------------------ working set
+# --------------------------------------------------------------------------------------------- working set
 def working_set(gdf: gpd.GeoDataFrame, rule: str = "all") -> tuple[gpd.GeoDataFrame, pd.Series]:
     """The decomposition working set in the format ``OSM_2_Decomposition.ipynb`` reads, and why the others are out.
 
     `rule` is ``"all"`` (every footprint that reached this point) or ``"paper"`` (the EG-ICE 2026
-    working set: footprints still non-convex, with 6 to 32 exterior vertices). Returns the working
-    table with `WORKING_SET_COLUMNS` (``geometry`` is ``geom_local``) and, on the index of `gdf`,
-    the reason each footprint left ("" for those in the set).
+    working set: non-convex footprints with 6 to 32 exterior vertices). Returns the table with
+    `WORKING_SET_COLUMNS` (``geometry`` is ``geom_local``) and, on the index of `gdf`, the reason
+    each footprint left ("" for those in the set).
     """
     geometries = gdf["geom_local"].to_numpy()
     n_vertices = np.array([count_exterior_vertices(geom) for geom in geometries])
@@ -287,8 +275,7 @@ def working_set(gdf: gpd.GeoDataFrame, rule: str = "all") -> tuple[gpd.GeoDataFr
     if rule == "paper":
         convex = convexity_mask(geometries)
         reason[convex] = "convex"
-        outside = ~convex & ((n_vertices < 6) | (n_vertices > 32))
-        reason[outside] = "vertices outside 6-32"
+        reason[~convex & ((n_vertices < 6) | (n_vertices > 32))] = "vertices outside 6-32"
     elif rule != "all":
         raise ValueError(f"Unknown working-set rule {rule!r}; expected 'all' or 'paper'.")
     keep = reason.eq("").to_numpy()
@@ -300,3 +287,73 @@ def working_set(gdf: gpd.GeoDataFrame, rule: str = "all") -> tuple[gpd.GeoDataFr
         "n_holes": shapely.get_num_interior_rings(geometries[keep]).astype(int),
     }, geometry="geometry", crs=None)
     return table[list(WORKING_SET_COLUMNS)].reset_index(drop=True), reason
+
+
+# ----------------------------------------------------------------------------------------------- the run
+@dataclass
+class AdapterRun:
+    """Everything one run of the adapter produces."""
+
+    footprints: gpd.GeoDataFrame        # every footprint that reached the checks, with all geometry columns
+    final: gpd.GeoDataFrame             # the footprints that passed them, with fidelity and complexity
+    working_set: gpd.GeoDataFrame       # the table for OSM_2_Decomposition.ipynb
+    checks_thin_parts: pd.DataFrame     # step 4
+    checks: pd.DataFrame                # step 7
+    funnel: pd.DataFrame                # one row per footprint of the sample
+
+
+def _leave(funnel: pd.DataFrame, sample_ids, step: str, reasons) -> None:
+    ids = list(sample_ids)
+    if ids:
+        funnel.loc[ids, "left_at"] = step
+        funnel.loc[ids, "reason"] = list(reasons)
+
+
+def run_adapter(path: str | Path, rules: Rules, settings: AdapterSettings = AdapterSettings()) -> AdapterRun:
+    """All steps of the adapter on a footprint sample (see the module docstring)."""
+    gdf = local_frame_step(load_sample(path))
+    funnel = gdf[list(IDENTITY_COLUMNS)].set_index("sample_id", drop=False).copy()
+    funnel["left_at"], funnel["reason"] = "", ""
+    funnel["n_vertices_raw"] = gdf["geom_local_raw"].map(count_exterior_vertices).to_numpy()
+    if "geom_local_bem4ai" in gdf.columns:
+        gdf = gdf.join(bem4ai_comparison(gdf))
+    invalid = ~gdf["outline_valid"].astype(bool)
+    _leave(funnel, gdf.loc[invalid, "sample_id"], "import", ["outline not valid as mapped"] * int(invalid.sum()))
+    gdf = gdf.loc[~invalid]
+
+    gdf = vertices_step(gdf, settings)
+    gdf = thin_parts_step(gdf, rules, settings)
+    reached_thin = gdf.copy()
+    checks_thin = check_footprints(gdf, "geom_local_thin", rules, names=["footprint_thin_parts"])
+    failed = checks_thin["hard_failures"].ne("")
+    _leave(funnel, gdf.loc[failed, "sample_id"], "thin parts", checks_thin.loc[failed, "hard_failures"])
+    gdf = gdf.loc[~failed]
+
+    gdf = axes_step(gdf, settings)
+    gdf = normalization_step(gdf, settings)
+
+    checks = check_footprints(gdf, "geom_local", rules)
+    failed = checks["hard_failures"].ne("")
+    _leave(funnel, gdf.loc[failed, "sample_id"], "checks", checks.loc[failed, "hard_failures"])
+    final = gdf.loc[~failed].copy()
+    final = final.join(fidelity(final["geom_local_raw"], final["geom_local"]).set_axis(final.index))
+    final["n_reflex_raw"] = reflex_vertex_counts(final["geom_local_raw"].to_numpy())
+    final["n_reflex"] = reflex_vertex_counts(final["geom_local"].to_numpy())
+    final["residual_steps"] = [residual_steps(g) for g in final["geom_local"]]
+
+    table, reason = working_set(final, settings.working_set_rule)
+    out_of_set = reason.ne("")
+    _leave(funnel, final.loc[out_of_set, "sample_id"], "working set", reason[out_of_set])
+
+    # What each step measured, for every footprint that reached it.
+    for frame, columns in ((reached_thin, ("bem4ai_hausdorff_m", "vertices_removed", *THIN_PART_COLUMNS)),
+                           (gdf, ("n_directions", "n_wall_lines", "axes_status")),
+                           (final, ("fidelity_hausdorff_m", "fidelity_iou", "fidelity_area_change_pct",
+                                    "n_reflex_raw", "n_reflex", "residual_steps"))):
+        present = [c for c in columns if c in frame.columns]
+        funnel = funnel.join(frame.set_index("sample_id")[present])
+    record = final.set_index("sample_id")
+    funnel["n_vertices"] = record["geom_local"].map(count_exterior_vertices).reindex(funnel.index)
+    funnel["preprocessing_level"] = settings.level
+    funnel["working_set_rule"] = settings.working_set_rule
+    return AdapterRun(gdf, final, table, checks_thin, checks, funnel.reset_index(drop=True))

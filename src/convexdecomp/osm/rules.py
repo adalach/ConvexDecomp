@@ -3,7 +3,7 @@
 The file has the layout of BEM4AI's ``config/checks.json`` (`helpers.rules` there), so the
 footprint checks the two pipelines share are the same entries:
 
-- the thresholds, by section: ``footprint`` and ``footprint_cleanup``;
+- the thresholds, by section (``footprint``);
 - the checks, in the list ``checks``. Each entry has a ``name``; a ``kind`` (``remove``,
   ``review`` or ``rerun``); ``first_stage``, the stage where it runs first; ``columns``, the
   measurements it reads; ``expression``, which ``DataFrame.eval`` evaluates over those columns and
@@ -150,20 +150,25 @@ class Rules:
     checks: tuple[Check, ...]
     thresholds: Mapping
 
-    def available(self, columns: Collection[str], stage: int | None = None) -> tuple[Check, ...]:
-        """The checks whose columns `columns` hold; with `stage`, only those that run there (``first_stage <= stage``)."""
+    def available(self, columns: Collection[str], stage: int | None = None,
+                  names: Collection[str] | None = None) -> tuple[Check, ...]:
+        """The checks whose columns `columns` hold; with `stage`, only those that run there (``first_stage <= stage``),
+        with `names`, only those."""
         return tuple(check for check in self.checks
-                     if check.reads(columns) and (stage is None or check.first_stage <= stage))
+                     if check.reads(columns) and (stage is None or check.first_stage <= stage)
+                     and (names is None or check.name in names))
 
-    def evaluate(self, frame: pd.DataFrame, stage: int | None = None) -> pd.DataFrame:
+    def evaluate(self, frame: pd.DataFrame, stage: int | None = None,
+                 names: Collection[str] | None = None) -> pd.DataFrame:
         """Which checks each row of `frame` fails, as BEM4AI's checks tables record it.
 
         Returns, on the frame's index, ``hard_failures``, ``review_flags`` and ``rerun_flags``: the
         names of the failed checks of kind ``remove``, ``review`` and ``rerun``, joined by ``;``
-        ("" where none failed). Only the checks `available` on the frame's columns are evaluated.
+        ("" where none failed). Only the checks `available` on the frame's columns (and in `names`,
+        when given) are evaluated.
         """
         found = {kind: [[] for _ in range(len(frame))] for kind in CHECK_KINDS}
-        for check in self.available(frame.columns, stage):
+        for check in self.available(frame.columns, stage, names):
             for position in np.flatnonzero(check.failing(frame, self.thresholds)):
                 found[check.kind][position].append(check.name)
         return pd.DataFrame({
