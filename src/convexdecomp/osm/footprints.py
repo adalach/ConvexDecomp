@@ -91,18 +91,44 @@ def _is_polygon(geometry) -> bool:
 
 
 def _min_rotated_rect_dims(geom) -> tuple[float, float]:
-    """The short and long side of a geometry's minimum rotated rectangle (NaN when it has none)."""
+    """The short and long side of a geometry's minimum rotated rectangle (NaN when it has none).
+
+    GEOS's ``oriented_envelope``, as BEM4AI measures it. GEOS 3.13 can return a rectangle smaller
+    than the convex hull, down to zero width, when hull points are collinear, as they are on an
+    outline snapped to its axes (Boulogne_sur_Mer_0019); then every hull edge direction is tried
+    instead (one side of the minimum-area rectangle lies on a hull edge).
+    """
     try:
         with np.errstate(invalid="ignore", divide="ignore"):
             rectangle = shapely.oriented_envelope(geom)
+        hull = geom.convex_hull
     except Exception:  # noqa: BLE001
         return math.nan, math.nan
     if rectangle is None or rectangle.geom_type != "Polygon":
         return math.nan, math.nan
-    ring = list(rectangle.exterior.coords)
-    sides = sorted(length for length in (math.hypot(ring[i + 1][0] - ring[i][0], ring[i + 1][1] - ring[i][1])
-                                         for i in range(4)) if length > 0.0)
-    return (float(sides[0]), float(sides[-1])) if sides else (math.nan, math.nan)
+    if rectangle.area >= hull.area * (1 - 1e-9):
+        ring = list(rectangle.exterior.coords)
+        sides = sorted(length for length in (math.hypot(ring[i + 1][0] - ring[i][0], ring[i + 1][1] - ring[i][1])
+                                             for i in range(4)) if length > 0.0)
+        return (float(sides[0]), float(sides[-1])) if sides else (math.nan, math.nan)
+    return _hull_rect_dims(hull)
+
+
+def _hull_rect_dims(hull) -> tuple[float, float]:
+    """The short and long side of the minimum-area rectangle of a convex hull, over its edge directions."""
+    if hull is None or hull.is_empty or hull.geom_type != "Polygon":
+        return math.nan, math.nan
+    pts = np.asarray(hull.exterior.coords, dtype=float)
+    edges = np.diff(pts, axis=0)
+    lengths = np.hypot(edges[:, 0], edges[:, 1])
+    keep = lengths > 0.0
+    if not keep.any():
+        return math.nan, math.nan
+    d = edges[keep] / lengths[keep, None]
+    along, across = pts[:-1] @ d.T, pts[:-1] @ np.stack([-d[:, 1], d[:, 0]], axis=1).T
+    a, b = np.ptp(along, axis=0), np.ptp(across, axis=0)
+    k = int(np.argmin(a * b))
+    return float(min(a[k], b[k])), float(max(a[k], b[k]))
 
 
 def _exterior_figures(polygons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

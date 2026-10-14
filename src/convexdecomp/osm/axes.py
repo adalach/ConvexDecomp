@@ -16,7 +16,8 @@
 
 `snap_to_axes` moves every edge onto its wall line and puts each vertex where the lines of its two
 edges cross; consecutive edges on one line become one, and a step between two lines that became one
-disappears. The result is kept only when it passes one acceptance test against the footprint it
+disappears. An edge shorter than what this moves its ends would point backwards; it is dropped, and
+its two neighbours meet. The result is kept only when it passes one acceptance test against the footprint it
 started from (`AxesSettings`): one valid polygon with the same holes, moved by at most
 ``max_move_m``, with an area change of at most ``max_area_change``, and no corner sharper than
 ``min_corner_deg`` that was not there before. Otherwise the footprint stays as it was, and the
@@ -35,7 +36,7 @@ from shapely.geometry.polygon import orient
 
 from convexdecomp.osm.vertices import VertexCleanup, remove_redundant_vertices
 
-__all__ = ["Axes", "AxesSettings", "find_axes", "residual_steps", "snap_to_axes"]
+__all__ = ["Axes", "AxesSettings", "facade_steps", "find_axes", "residual_steps", "snap_to_axes"]
 
 
 @dataclass(frozen=True)
@@ -44,8 +45,9 @@ class AxesSettings:
 
     angle_tolerance_deg: float = 3.0
     direction_tolerance_m: float = 0.1
-    #: Facade runs at most this far apart become one wall (BEM4AI closes facade offsets up to 0.5 m).
-    offset_tolerance_m: float = 0.5
+    #: Facade runs at most this far apart become one wall. Deeper steps are kept as architecture (BEM4AI closes
+    #: facade offsets up to 0.5 m; on the BEM4AI sample, 0.2 m moves the outlines half as far for 1 % more convex parts).
+    offset_tolerance_m: float = 0.2
     #: None: directions are not made perpendicular.
     orthogonal_tolerance_deg: float | None = None
     #: A vertex moved further than this by the intersection of its lines keeps its place on its edge's line.
@@ -227,32 +229,40 @@ def _project(point: np.ndarray, normal: np.ndarray, rho: float) -> np.ndarray:
     return point - normal * (float(normal @ point) - rho)
 
 
+def _snap_vertex(p: np.ndarray, a: int | None, b: int | None, axes: Axes, settings: AxesSettings) -> list:
+    """Where the vertex at `p` between an edge on line `a` and one on line `b` goes: one point, or two across a vanished step."""
+    if a is None or b is None:
+        return [p]
+    (na, ra), (nb, rb) = _line(axes, a), _line(axes, b)
+    det = na[0] * nb[1] - na[1] * nb[0]
+    if a == b:
+        return [_project(p, nb, rb)]
+    if abs(det) < math.sin(math.radians(1.0)):
+        # Two parallel lines meet here (the step between them vanished): keep both, joined across.
+        return [_project(p, na, ra), _project(p, nb, rb)]
+    x = np.array([(ra * nb[1] - rb * na[1]) / det, (na[0] * rb - nb[0] * ra) / det])
+    return [x] if math.dist(x, p) <= settings.max_vertex_shift_m else [_project(p, nb, rb)]
+
+
 def _snap_ring(pts: np.ndarray, ring: int, axes: Axes, settings: AxesSettings) -> list:
     n = len(pts)
     lines = [axes.edge_line.get((ring, i)) for i in range(n)]
-    out = []
-    for i in range(n):
-        a, b = lines[i - 1], lines[i]
-        p = pts[i]
-        if a is None or b is None:
-            out.append(tuple(p))
-            continue
-        (na, ra), (nb, rb) = _line(axes, a), _line(axes, b)
-        det = na[0] * nb[1] - na[1] * nb[0]
-        if a == b:
-            out.append(tuple(_project(p, nb, rb)))
-            continue
-        if abs(det) < math.sin(math.radians(1.0)):
-            # Two parallel lines meet here (the step between them vanished): keep both, joined across.
-            out.append(tuple(_project(p, na, ra)))
-            out.append(tuple(_project(p, nb, rb)))
-            continue
-        x = np.array([(ra * nb[1] - rb * na[1]) / det, (na[0] * rb - nb[0] * ra) / det])
-        if math.dist(x, p) <= settings.max_vertex_shift_m:
-            out.append(tuple(x))
-        else:
-            out.append(tuple(_project(p, nb, rb)))
-    return out
+    kept = list(range(n))  # the edges of the ring still in it
+    while True:
+        # The vertex before each kept edge sits between the lines of the kept edges either side; where
+        # edges were dropped, it starts from the middle of the gap they leave.
+        starts = []
+        for j, i in enumerate(kept):
+            before = kept[j - 1]
+            p = pts[i] if (before + 1) % n == i else (pts[(before + 1) % n] + pts[i]) / 2
+            starts.append(_snap_vertex(p, lines[before], lines[i], axes, settings))
+        # An edge shorter than what snapping moves its ends would point backwards: drop it, so that its
+        # neighbours meet (the shortest such edge first, then look again).
+        flipped = [i for j, i in enumerate(kept)
+                   if float((starts[(j + 1) % len(kept)][0] - starts[j][-1]) @ (pts[(i + 1) % n] - pts[i])) < 0]
+        if not flipped or len(kept) <= 3:
+            return [tuple(x) for start in starts for x in start]
+        kept.remove(min(flipped, key=lambda i: math.dist(pts[i], pts[(i + 1) % n])))
 
 
 def _sharpest_corner(poly: Polygon) -> float:
@@ -299,11 +309,16 @@ def snap_to_axes(poly, settings: AxesSettings = AxesSettings(), axes: Axes | Non
 def residual_steps(poly, max_step_m: float = 0.5, max_jog_m: float = 1.0, angle_deg: float = 2.0) -> int:
     """Facade steps left in an outline: a short edge between two parallel edges facing the same way at most `max_step_m` apart.
 
-    These are what the facade-offset step of BEM4AI closes; the axes should leave none.
+    These are what the facade-offset step of BEM4AI closes.
     """
+    return len(facade_steps(poly, max_step_m, max_jog_m, angle_deg))
+
+
+def facade_steps(poly, max_step_m: float = 0.5, max_jog_m: float = 1.0, angle_deg: float = 2.0) -> list[float]:
+    """The depth of every facade step of an outline (see `residual_steps`)."""
     if poly is None or poly.geom_type != "Polygon":
-        return 0
-    count = 0
+        return []
+    depths = []
     for ring in [orient(poly, 1.0).exterior, *orient(poly, 1.0).interiors]:
         pts = np.asarray(ring.coords[:-1], dtype=float)
         n = len(pts)
@@ -320,5 +335,5 @@ def residual_steps(poly, max_step_m: float = 0.5, max_jog_m: float = 1.0, angle_
                 continue  # not parallel, or facing the other way
             offset = abs(da[0] * v[b][1] - da[1] * v[b][0])  # the step across the walls' direction
             if 1e-6 < offset <= max_step_m:
-                count += 1
-    return count
+                depths.append(float(offset))
+    return depths

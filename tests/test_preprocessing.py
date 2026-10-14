@@ -14,13 +14,14 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely import affinity
-from shapely.geometry import Polygon, box
+from shapely.geometry import Point, Polygon, box
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from convexdecomp.osm.axes import AxesSettings, find_axes, residual_steps, snap_to_axes
 from convexdecomp.osm.axis_alignment import (EdgeAlignmentConfig, _cluster_angle_families, _raw_edges_from_polygon,
                                              _weighted_mean_alpha, align_polygon_edges_via_line_clustering)
+from convexdecomp.osm import footprints
 from convexdecomp.osm.footprints import footprint_fingerprint, footprint_shapes, thin_hole_counts
 from convexdecomp.osm.local_frames import to_local_frames
 from convexdecomp.osm.normalize import FootprintNormalizationConfig, normalize_footprint_geometry
@@ -70,6 +71,14 @@ def test_footprint_shapes_of_a_rectangle():
     assert (row["n_footprint_parts"], row["n_footprint_holes"], row["n_footprint_vertices"]) == (1, 0, 4)
     assert math.isclose(row["footprint_width_m"], 10) and math.isclose(row["footprint_length_m"], 20)
     assert math.isclose(row["min_corner_angle_deg"], 90.0) and math.isclose(row["footprint_area_m2"], 200.0)
+
+
+def test_a_degenerate_rectangle_from_geos_is_measured_on_the_hull(monkeypatch):
+    # GEOS 3.13 returned a zero-width rectangle for a snapped outline; a rectangle smaller than the hull is not used.
+    poly = affinity.rotate(Polygon([(0, 0), (20, 0), (20, 4), (12, 4), (12, 10), (0, 10)]), 30, origin=(0, 0))
+    monkeypatch.setattr(footprints.shapely, "oriented_envelope", lambda geom: box(0, 0, 7, 1e-15))
+    row = footprint_shapes([poly]).iloc[0]
+    assert math.isclose(row["footprint_width_m"], 10) and math.isclose(row["footprint_length_m"], 20)
 
 
 def test_thin_holes_are_counted():
@@ -152,10 +161,12 @@ def test_a_wing_takes_a_large_share_off():
 def test_facade_steps_up_to_the_offset_tolerance_close():
     small = Polygon([(0, 0), (12, 0), (12, 0.4), (20, 0.4), (20, 10), (0, 10)])
     large = Polygon([(0, 0), (12, 0), (12, 0.8), (20, 0.8), (20, 10), (0, 10)])
-    out, status, _ = snap_to_axes(small)
+    wide = AxesSettings(offset_tolerance_m=0.5)
+    out, status, _ = snap_to_axes(small, wide)
     assert status == "snapped" and vertex_count(out) == 4 and residual_steps(out) == 0
     assert out.hausdorff_distance(small) <= 0.4 + 1e-9                  # the longer run stays, the shorter moves
-    assert snap_to_axes(large)[1] == "unchanged"
+    assert snap_to_axes(large, wide)[1] == "unchanged"
+    assert snap_to_axes(small)[1] == "unchanged"                        # the default 0.2 m keeps a 0.4 m step
 
 
 def test_a_slightly_bent_wall_becomes_one_wall_without_a_step():
@@ -180,9 +191,18 @@ def test_walls_facing_each_other_are_never_one_line():
     assert len(sides) == 4                                              # x = 0, 9.8, 10.2, 20 stay apart
 
 
+def test_an_edge_shorter_than_the_snap_is_dropped_rather_than_flipped():
+    # The 45-degree edge joins the line of the long one 0.3 m out, which carries its end 0.42 m along
+    # the 0.2 m edge after it: that edge would point backwards and leave a flap, so it goes.
+    poly = Polygon([(0, 0), (4, 0), (4.7, 0.7), (4.9, 0.7), (4.9, 1.5), (5.92, 1.5), (8.92, 4.5), (8.92, 8), (0, 8)])
+    out, status, _ = snap_to_axes(poly, AxesSettings(offset_tolerance_m=0.5))
+    assert status == "snapped" and vertex_count(out) == 8
+    assert Point(4.9, 0.48).distance(out.exterior) < 1e-6
+
+
 def test_a_normalization_that_moves_too_far_is_refused():
     stepped = Polygon([(0, 0), (12, 0), (12, 0.4), (20, 0.4), (20, 10), (0, 10)])
-    out, status, _ = snap_to_axes(stepped, AxesSettings(max_move_m=0.1))
+    out, status, _ = snap_to_axes(stepped, AxesSettings(offset_tolerance_m=0.5, max_move_m=0.1))
     assert status == "kept_move" and out.equals(stepped)
 
 
