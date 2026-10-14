@@ -126,13 +126,14 @@ def check_footprints(gdf: gpd.GeoDataFrame, geometry_col: str, rules: Rules, sta
     """The checks table of one stage, as BEM4AI writes ``checks_stage<N>.csv``.
 
     One row per footprint: the identity columns (the fingerprint as ``fingerprint``), the
-    measurements (`footprint_shapes` and ``thin_part_share`` below ``zones.min_width_m``), the
+    measurements (`footprint_shapes`, and ``thin_part_share``: the share of the area the shrink and expand by
+    half of ``footprint.thin_part_width_m`` takes off), the
     failed checks of each kind (``hard_failures``, ``review_flags``, ``rerun_flags``) and
     ``written_at``.
     """
     geometries = gdf[geometry_col].to_numpy()
     measured = footprint_shapes(geometries)
-    measured["thin_part_share"] = thin_part_shares(geometries, float(rules.thresholds["zones"]["min_width_m"]))
+    measured["thin_part_share"] = thin_part_shares(geometries, float(rules.thresholds["footprint"]["thin_part_width_m"]))
     measured.index = gdf.index
     table = pd.concat([
         gdf[["sample_id", "source_sample_id"]].astype(str),
@@ -197,9 +198,6 @@ class GeometrySettings:
     facade_offsets: FacadeOffsetConfig
     #: Pieces below this are dropped by the thin-part cleanup.
     min_piece_area_m2: float = 2.0
-    #: A thin-part cleanup that takes more than this share of the area off is refused
-    #: (``cleanup_mode`` ``kept_area_change``); None: no limit.
-    thin_part_max_area_change_ratio: float | None = 0.05
 
 
 def regularize_geometry(gdf: gpd.GeoDataFrame, level: str, settings: GeometrySettings) -> gpd.GeoDataFrame:
@@ -207,8 +205,7 @@ def regularize_geometry(gdf: gpd.GeoDataFrame, level: str, settings: GeometrySet
 
     L1 normalizes (`normalize_buildings_gdf`); L2 also aligns the edges (`align_buildings_gdf`),
     erases the parts thinner than twice ``settings.thin_part_shrink_m`` while keeping the footprint
-    one polygon (`clean_polygonal_in_one_piece`, ``cleanup_mode``; ``kept_area_change`` where it would take
-    more than ``settings.thin_part_max_area_change_ratio`` of the area off) and closes the facade offsets
+    one polygon (`clean_polygonal_in_one_piece`, ``cleanup_mode``) and closes the facade offsets
     (`close_facade_offsets`, ``facade_status`` and ``facade_area_change_m2``). The normalization and
     alignment diagnostics (``vertex_delta_norm``, ``alignment_changed``, ...) are kept.
     """
@@ -221,7 +218,8 @@ def regularize_geometry(gdf: gpd.GeoDataFrame, level: str, settings: GeometrySet
     work["geom_local_preray"] = pd.Series(list(work["geometry"]), index=work.index, dtype=object)
 
     if _level_at_least(level, "L2"):
-        thin = [_thin_parts_erased(geom, settings) for geom in work["geom_local_preray"]]
+        thin = [clean_polygonal_in_one_piece(geom, settings.thin_part_shrink_m, settings.thin_part_shrink_m,
+                                             settings.min_piece_area_m2) for geom in work["geom_local_preray"]]
         facade = [close_facade_offsets(geom, settings.facade_offsets) for geom, _ in thin]
         work["cleanup_mode"] = [mode for _, mode in thin]
         work["facade_status"] = [info["status"] for _, info in facade]
@@ -234,16 +232,6 @@ def regularize_geometry(gdf: gpd.GeoDataFrame, level: str, settings: GeometrySet
         final = list(work["geom_local_preray"])
     work["geom_local"] = pd.Series(final, index=work.index, dtype=object)
     return sync_geometry(work, "geom_local")
-
-
-def _thin_parts_erased(geom, settings: GeometrySettings):
-    """`clean_polygonal_in_one_piece` within the area guard of `settings`: the geometry and its ``cleanup_mode``."""
-    cleaned, mode = clean_polygonal_in_one_piece(geom, settings.thin_part_shrink_m, settings.thin_part_shrink_m,
-                                                 settings.min_piece_area_m2)
-    limit = settings.thin_part_max_area_change_ratio
-    if limit is not None and geom.area > 0 and abs(cleaned.area - geom.area) > limit * geom.area:
-        return geom, "kept_area_change"
-    return cleaned, mode
 
 
 def reflex_vertex_counts(geometries, tol_deg: float = 1.0) -> np.ndarray:

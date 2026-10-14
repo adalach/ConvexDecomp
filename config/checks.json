@@ -6,15 +6,13 @@
     "max_exterior_vertices": 64,
     "sliver_max_width_m": 2.0,
     "sliver_min_aspect_ratio": 8.0,
-    "min_corner_angle_deg": 30.0
+    "min_corner_angle_deg": 30.0,
+    "thin_part_width_m": 2.0,
+    "max_thin_part_share": 0.05
   },
   "footprint_cleanup": {
     "thin_part_max_width_m": 1.0,
     "collinear_tolerance_m": 0.05
-  },
-  "zones": {
-    "min_width_m": 2.0,
-    "max_thin_share": 0.01
   },
   "checks": [
     {
@@ -96,14 +94,15 @@
       "meaning": "The outline has a corner too sharp for a room: a wedge-shaped building or a mapping artefact."
     },
     {
-      "name": "thinner_than_zone_width",
-      "kind": "review",
-      "first_stage": 4,
+      "name": "footprint_thin_parts",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
       "columns": [
         "thin_part_share"
       ],
-      "expression": "thin_part_share > {zones.max_thin_share}",
-      "meaning": "Part of the footprint is narrower than the thinnest zone the decomposition allows (zones.min_width_m): the decomposition will probably find no zoning for it."
+      "expression": "thin_part_share > {footprint.max_thin_part_share}",
+      "meaning": "Erasing the parts narrower than footprint.thin_part_width_m (a shrink and expand by half that width, the thinnest zone a room can be) would take off more than this share of the footprint: a wing of the building, not a mapping artefact."
     }
   ]
 }

@@ -3,7 +3,7 @@
 The file has the layout of BEM4AI's ``config/checks.json`` (`helpers.rules` there), so the
 footprint checks the two pipelines share are the same entries:
 
-- the thresholds, by section: ``footprint``, ``footprint_cleanup`` and ``zones``;
+- the thresholds, by section: ``footprint`` and ``footprint_cleanup``;
 - the checks, in the list ``checks``. Each entry has a ``name``; a ``kind`` (``remove``,
   ``review`` or ``rerun``); ``first_stage``, the stage where it runs first; ``columns``, the
   measurements it reads; ``expression``, which ``DataFrame.eval`` evaluates over those columns and

@@ -24,7 +24,7 @@ from convexdecomp.osm.footprints import (FootprintCleanup, clean_footprints, foo
 from convexdecomp.osm.local_frames import (FacadeOffsetConfig, clean_polygonal_in_one_piece, close_facade_offsets,
                                            local_frame)
 from convexdecomp.osm.normalize import FootprintNormalizationConfig, normalize_footprint_geometry
-from convexdecomp.osm.preprocess import GeometrySettings, fidelity, regularize_geometry
+from convexdecomp.osm.preprocess import GeometrySettings, check_footprints, fidelity, regularize_geometry
 from convexdecomp.osm.review_log import add_marks, footprint_identity, keep_marks, mark_states, read_log
 from convexdecomp.osm.rules import FOOTPRINT_STAGE, PREPROCESSED_STAGE, load_rules, parse_checks
 
@@ -38,16 +38,16 @@ def test_repository_checks_load_and_flag_by_kind():
     frame = pd.DataFrame({
         "n_footprint_parts": [1, 2], "footprint_width_m": [10.0, 1.0], "footprint_length_m": [20.0, 30.0],
         "footprint_area_m2": [200.0, 15.0], "n_footprint_holes": [0, 5], "n_footprint_vertices": [4, 8],
-        "min_corner_angle_deg": [90.0, 20.0], "thin_part_share": [0.0, 0.5],
+        "min_corner_angle_deg": [90.0, 20.0], "thin_part_share": [0.04, 0.06],
     })
     at_footprint = rules.evaluate(frame, FOOTPRINT_STAGE)
     assert at_footprint.loc[0].tolist() == ["", "", ""]
     assert set(at_footprint.at[1, "hard_failures"].split(";")) == {
-        "footprint_not_one_polygon", "footprint_sliver", "footprint_below_min_area", "sharp_angle"}
+        "footprint_not_one_polygon", "footprint_sliver", "footprint_below_min_area", "sharp_angle",
+        "footprint_thin_parts"}
     assert at_footprint.at[1, "review_flags"] == "footprint_too_many_holes"
-    # The zone-width check runs first at stage 4.
-    assert set(rules.evaluate(frame, PREPROCESSED_STAGE).at[1, "review_flags"].split(";")) == {
-        "footprint_too_many_holes", "thinner_than_zone_width"}
+    # The footprint checks judge the preprocessed footprint as well.
+    assert rules.evaluate(frame, PREPROCESSED_STAGE).equals(at_footprint)
 
 
 def test_a_check_must_read_its_columns():
@@ -173,16 +173,17 @@ def test_iou_of_outlines_that_differ_by_rounding_noise_is_one():
     assert math.isclose(fidelity([a], [b])["fidelity_iou"].iloc[0], 1.0)
 
 
-def test_thin_part_cleanup_leaves_a_wing_that_is_more_than_an_artefact():
+def test_a_wing_fails_the_thin_part_check_and_a_stub_is_erased():
     import geopandas as gpd
     winged = box(0, 0, 10, 10).union(box(10, 4, 30, 5.8))       # a 20 m wing 1.8 m wide: 36 of 136 m2
     stub = box(0, 0, 10, 10).union(box(10, 4, 11.5, 5.8))       # a 1.5 m stub: 2.7 of 102.7 m2
-    gdf = gpd.GeoDataFrame({"sample_id": ["w", "s"], "geom_local_clean": [winged, stub]},
+    gdf = gpd.GeoDataFrame({"sample_id": ["w", "s"], "source_sample_id": ["w", "s"],
+                            "footprint_fingerprint": ["fw", "fs"], "geom_local_clean": [winged, stub]},
                            geometry=[winged, stub], crs=None)
-    settings = GeometrySettings(FootprintNormalizationConfig(), ALIGN, 1.0, FacadeOffsetConfig(),
-                                thin_part_max_area_change_ratio=0.05)
-    out = regularize_geometry(gdf, "L2", settings).set_index("sample_id")
-    assert out.at["w", "cleanup_mode"] == "kept_area_change" and math.isclose(out.at["w", "geom_local"].area, 136.0)
+    checks = check_footprints(gdf, "geom_local_clean", load_rules(), FOOTPRINT_STAGE).set_index("sample_id")
+    assert checks.at["w", "hard_failures"] == "footprint_thin_parts" and checks.at["s", "hard_failures"] == ""
+    settings = GeometrySettings(FootprintNormalizationConfig(), ALIGN, 1.0, FacadeOffsetConfig())
+    out = regularize_geometry(gdf.loc[[1]], "L2", settings).set_index("sample_id")
     assert out.at["s", "cleanup_mode"] == "cleaned" and math.isclose(out.at["s", "geom_local"].area, 100.0)
 
 

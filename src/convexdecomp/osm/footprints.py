@@ -7,7 +7,7 @@ The functions and column names follow BEM4AI's ``helpers/building_sampling.py`` 
 | --- | --- |
 | ``n_osm_vertices``, ``cleanup_filled_m2``, ``cleanup_cut_m2`` (`CLEANUP_COLUMNS`) | `clean_footprints`: the exterior vertices of the outline it was given, the area of the holes it filled and of the parts it cut off |
 | ``n_footprint_parts``, ``n_footprint_holes``, ``n_footprint_vertices``, ``footprint_width_m``, ``footprint_length_m``, ``footprint_area_m2``, ``min_corner_angle_deg``, ``footprint_circularity`` (`FOOTPRINT_SHAPE_COLUMNS`) | `footprint_shapes` |
-| ``thin_part_share`` | `thin_part_shares`: the share of the area in parts narrower than the thinnest zone (ConvexDecomp's own) |
+| ``thin_part_share`` | `thin_part_shares`: the share of the area in parts narrower than ``footprint.thin_part_width_m``, what BEM4AI Stage 4's shrink and expand takes off |
 | ``footprint_fingerprint`` | `footprint_fingerprint` of the outline before the cleanup |
 
 Every function works on footprints in metres. BEM4AI fingerprints its footprints in WGS84 degrees;
