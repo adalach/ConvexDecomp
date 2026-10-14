@@ -11,6 +11,7 @@ tracer observes the search with `sys.monitoring`.
 | `search_tree_figure.py` | Draws a traced search as the tree of the EG-ICE 2026 search-tree figure: a badge per state with the piece being decomposed in colour, the cut on every edge, legend and statistics. PDF, SVG or PNG. |
 | `search_explorer/` | A local web app that runs the traced search with the score and search settings on sliders and shows the tree and the ranked variants. See its README. |
 | `import_bem4ai_footprints.py` | Draws a random sample of the BEM4AI Stage 3 footprints and writes it as an input of `OSM_1_Preprocessing.ipynb`: the OSM outline as mapped, read again from BEM4AI's city extract and checked against the fingerprint BEM4AI recorded, plus BEM4AI's cleaned footprint, both in a local frame. Runs in BEM4AI's own environment, because it uses BEM4AI's reader, repair and fingerprint. |
+| `osm_adapter_figures.py` | Runs the OSM preprocessing (level L2, the notebook's settings) on the BEM4AI sample, keeps every intermediate geometry, and writes the figures of the OSM adapter note (SVG, TUM style) and `osm_adapter_numbers.json` with the counts it quotes. `--types` takes a CSV of `sample_id` and `building_type` from BEM4AI for the composition figure. |
 
 ## Search-tree figure
 
