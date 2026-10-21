@@ -40,6 +40,26 @@ Writes `data/bem4ai/osm_footprints_bem4ai_sample.gpkg` (layers `footprints` and 
 The sample leaves out the footprints BEM4AI's review log removes and, unless
 `--keep-review-selections` is given, those a review check selected; `--n 0` takes them all.
 
+## Corner-ray perimeter
+
+`corner_perimeter/` runs and draws `convexdecomp.corner_perimeter` (see its README) on the BEM4AI footprint
+sample, by default the snapshot `temp/perimeter/subset_snapshot.pkl` the method was measured on (`--sample` takes
+another pickle or a GeoPackage with `sample_id`). Results go to `temp/corner_perimeter/` unless `--out` says
+otherwise.
+
+| File | What it is |
+| --- | --- |
+| `note_figures.py` | The figures of the note "Convex Decomposition Perimeter", one SVG per step (`--out` the note's attachments, `--png` small previews). |
+| `run_sample.py` | Every footprint of the sample with the chosen settings or others (`--set wing_end_max_m=0`): `run.csv`, `zones.gpkg`, `run.log` with the totals, `--sheets` for contact sheets of the worst and of random footprints. |
+| `compare_variants.py` | The chosen settings against variants with one choice changed, on the 23 footprints with the most reflex corners (`--n 0`: all); `--draw <variant>` draws the footprints where it differs. |
+| `overview.py` | Lines and zones of footprints side by side, with how often each step acted (default: the three test footprints). |
+| `drawing.py` | The shared drawing: styles, legends, windows, lines and zones of a result, the bare construction of the rays. |
+
+```bash
+python tools/corner_perimeter/run_sample.py --sheets
+python tools/corner_perimeter/note_figures.py --out "/path/to/Convex Decomposition/attachments"
+```
+
 ## Search explorer
 
 ```bash
@@ -54,6 +74,9 @@ tool reads the first with `--sample-id`; the explorer falls back to a built-in p
 second is missing.
 
 ## Tests
+
+`tests/test_corner_perimeter.py` checks the corner-ray perimeter on four real footprints, the wing ends, simple
+shapes, every stage, the settings and the preview.
 
 `tests/test_search_trace.py` checks that traced and untraced runs agree on an L shape, a
 courtyard and a bent band, that every recorded success covers its polygon, and that the

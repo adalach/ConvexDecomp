@@ -25,6 +25,7 @@ dependencies = [
 packages = [
   "convexdecomp",
   "convexdecomp.core",
+  "convexdecomp.corner_perimeter",
   "convexdecomp.diagnostics",
   "convexdecomp.geometry",
   "convexdecomp.io",
@@ -37,6 +38,7 @@ packages = [
 [tool.setuptools.package-dir]
 convexdecomp = "src/convexdecomp"
 "convexdecomp.core" = "src/convexdecomp/core"
+"convexdecomp.corner_perimeter" = "src/convexdecomp/corner_perimeter"
 "convexdecomp.diagnostics" = "src/convexdecomp/diagnostics"
 "convexdecomp.geometry" = "src/convexdecomp/geometry"
 "convexdecomp.io" = "src/convexdecomp/io"
