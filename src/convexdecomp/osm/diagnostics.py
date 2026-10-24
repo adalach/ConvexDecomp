@@ -98,7 +98,11 @@ def collect_building_polygon_entries(row: pd.Series) -> list[tuple[Polygon, str]
     """
     if bool(row.get("perimeter_defined", False)):
         entries: list[tuple[Polygon, str]] = []
-        entries.extend((poly, "perimeter_part") for poly in extract_polygons(row.get("perimeter_parts")))
+        parts = extract_polygons(row.get("perimeter_parts"))
+        roles = row.get("perimeter_part_roles")
+        if not isinstance(roles, (list, tuple)) or len(roles) != len(parts):
+            roles = ["perimeter_part"] * len(parts)
+        entries.extend(zip(parts, roles))
         entries.extend((poly, "interior") for poly in extract_polygons(row.get("interior_geom")))
         return entries
     return [(poly, "footprint") for poly in extract_polygons(row.get("geometry"))]

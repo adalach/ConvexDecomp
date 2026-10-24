@@ -127,7 +127,8 @@ def clean_ring(c: np.ndarray) -> np.ndarray:
     k = 0
     while len(c) > 3 and k < len(c):
         a, p, b = c[k - 1], c[k], c[(k + 1) % len(c)]
-        if np.linalg.norm(p - a) < 1e-6 or (abs(cross(unit(p - a), unit(b - p))) < 1e-3
+        # a repeated next vertex (b == p) is dropped on the next turn, as the repeat of p
+        if np.linalg.norm(p - a) < 1e-6 or (np.any(b != p) and abs(cross(unit(p - a), unit(b - p))) < 1e-3
                                             and (p - a) @ (b - p) > 0):
             c = np.delete(c, k, axis=0)
             k = 0

@@ -18,7 +18,7 @@ This repository is a workflow layer around two upstream data sources that are no
 The repository exposes two case-study adapters built around one shared decomposition core:
 
 - `ResPlan`: residential floorplans with semantic room structure and room-level convex decomposition.
-- `OSM`: OpenStreetMap building footprints (a sample of the [BEM4AI](https://github.com/adalach/BEM4AI) footprints) through an adapter of eight steps: import, local frame, duplicate and collinear vertices, thin parts, architectural axes, normalization to the axes, the footprint checks, and the working set; then optional perimeter preparation and polygon-level convex decomposition.
+- `OSM`: OpenStreetMap building footprints (a sample of the [BEM4AI](https://github.com/adalach/BEM4AI) footprints) through an adapter of eight steps: import, local frame, duplicate and collinear vertices, thin parts, architectural axes, normalization to the axes, the footprint checks, and the working set; then the corner-ray perimeter, which splits each footprint into perimeter zones along the facades and core parts, and polygon-level convex decomposition of every zone.
 
 The public notebooks are stage-level orchestrators. Reusable implementation lives in `src/convexdecomp/`, while the ResPlan notebook clones the upstream repository into a local `external/resplan/` runtime folder only when the dataset archive source is missing.
 
@@ -77,6 +77,7 @@ ConvexDecomp/
 │   └── OSM_2_Decomposition.ipynb
 └── src/convexdecomp/
     ├── core/
+    ├── corner_perimeter/
     ├── diagnostics/
     ├── geometry/
     ├── io/
@@ -89,9 +90,10 @@ ConvexDecomp/
 ## Structure
 
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
+- `src/convexdecomp/corner_perimeter/`: the corner-ray perimeter: a 4.5 m band along the facades, rays from the footprint's corners, and ten rules and a tidy step that clean up the zones without moving the outline; its README shows the pipeline, every step with figures (`docs/corner_perimeter/`) and every setting.
 - `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`), the exact openings of a hole that the OSM search tries (`openings.py`), and the splitting of polygons with holes into hole-less pieces used in preprocessing and by ResPlan (`holes.py`).
 - `src/convexdecomp/resplan/`: ResPlan preprocessing, room operations, and decomposition helpers.
-- `src/convexdecomp/osm/`: the OSM adapter (`preprocess.py` its steps and `run_adapter`; `local_frames.py`, `vertices.py`, `thin_parts.py` and `axes.py` the steps themselves; `rules.py` and `footprints.py` the checks of `config/checks.json` and the measurements they read; `review_log.py` a review log in BEM4AI's format), perimeter preparation, subdivision, decomposition, and input preparation. `normalize.py` and `axis_alignment.py` hold the earlier normalization and edge alignment, which the adapter no longer uses.
+- `src/convexdecomp/osm/`: the OSM adapter (`preprocess.py` its steps and `run_adapter`; `local_frames.py`, `vertices.py`, `thin_parts.py` and `axes.py` the steps themselves; `rules.py` and `footprints.py` the checks of `config/checks.json` and the measurements they read; `review_log.py` a review log in BEM4AI's format), the corner-ray perimeter on the working set (`perimeter_zones.py`), decomposition, and input preparation. `normalize.py` and `axis_alignment.py` hold the earlier normalization and edge alignment, which the adapter no longer uses; `perimeter.py` and `subdivide.py` the earlier offset perimeter and trapezoid subdivision, which the OSM decomposition notebook no longer uses.
 - `config/checks.json`: the footprint checks and their thresholds, in the layout of BEM4AI's `config/checks.json`; the footprint checks the two pipelines share are the same entries.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
@@ -127,7 +129,7 @@ Each GeoPackage holds two layers.
 | `space_id` | one physical space instance; two bedrooms in one plan get two different values |
 | `zone_id` | the polygon that was handed to the decomposer |
 | `part_id` | one convex output part |
-| `zone_role` | which preparation stage produced the zone, e.g. `room`, `interior`, `perimeter_trapezoid` |
+| `zone_role` | which preparation stage produced the zone, e.g. `room`, `perimeter_zone`, `thin_zone`, `interior` (a core part) |
 | `space_part_count`, `space_is_split` | how many parts the space was split into, and whether it was split at all |
 
 `interfaces` has one row per boundary sub-segment of one part, which is one row per prospective wall face. A shared wall appears twice, once from each side, with the same `interface_key`. The `boundary_kind` column is the point of the whole artifact:

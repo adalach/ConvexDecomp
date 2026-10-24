@@ -47,7 +47,7 @@ Derived notebook outputs:
 
 These derived files are local runtime artifacts and are not shipped in the public release zip.
 
-`osm_zones.gpkg` carries the same `zones` and `interfaces` layers as the ResPlan artifact, in the input CRS `EPSG:32633`. Because an OSM footprint is one physical envelope, the whole building is one space and the perimeter, trapezoid, corner, remainder, and interior pieces are zones inside it.
+`osm_zones.gpkg` carries the same `zones` and `interfaces` layers as the ResPlan artifact, in the input CRS `EPSG:32633`. Because an OSM footprint is one physical envelope, the whole building is one space and the perimeter zones, thin zones, and core parts of the corner-ray perimeter are zones inside it.
 
 If you want to create an alternative OSM input table in the same public format, use:
 
