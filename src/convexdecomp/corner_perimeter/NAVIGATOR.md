@@ -8,22 +8,28 @@ page and proposes how it fits; the decisions marked as hers are hers. Read `READ
 ## What to load
 
 - The package `convexdecomp.corner_perimeter`, in this folder, at the ConvexDecomp commit named in the message that
-  brought this file (branch `osm-preprocessing`). It imports only numpy, shapely and `convexdecomp.core.scores`; it
-  neither draws nor writes.
+  brought this file (branch `osm-preprocessing`; the local `main` holds the same package since `bfb4091`). It imports
+  only numpy, shapely and `convexdecomp.core.scores`; it neither draws nor writes.
 - Load it the way `engines/convexdecomp.py` loads the decomposer: from its own read-only snapshot
   (`git archive <commit> src` into `_code/cd-<commit12>/src`, first on `sys.path`, the module checked to lie under
   it). Nothing of it is copied into BEM4AI.
-- Keep the decomposer's own pin (`01c9289`) for the zones: the branch at this commit also holds later changes to
-  `convexdecomp.osm`, which would change the decomposer's results. The perimeter does not need the decomposer, so
-  the two can sit in two snapshots.
+- The decomposer: ConvexDecomp's own OSM path now decomposes exactly this perimeter's output
+  (`convexdecomp.osm.perimeter_zones`, below), with the engine's `min_zone_width_m` at 1.2 m since `dafdb78`, the
+  narrowest core the perimeter keeps. The decomposer pin `01c9289` has a hard 2 m width and refuses the core parts
+  and zones between 1.2 and 2 m wide, so a Zones step that takes the corner-ray zones should pin the decomposer at
+  this commit too. The decomposer is still being worked on in ConvexDecomp: ask before moving its pin again.
 
 ## Where it sits in Stage 4
 
 Stage 4's group `S6` today is notebook 4's perimeter (cell `18b7c3957ced30b2`, `nb.perimeter_and_pieces`: an
-offset band and trapezoids, the `perimeter_*` settings, layers `perimeter` and `core`). A proposal:
+offset band and trapezoids, the `perimeter_*` settings, layers `perimeter` and `core`). In ConvexDecomp the corner
+rays have replaced that offset band: `OSM_2_Decomposition.ipynb` runs the corner-ray perimeter instead of the offset
+perimeter and the trapezoid pre-check (`77be666`; `osm/perimeter.py` is still in the repository but no longer
+called there). Nothing in the corner-ray package depends on the offset band. A proposal:
 
-- a switch `perimeter_method` in group `S6`: `notebook` (the default: notebook 4's behaviour, so the equivalence
-  suites stay green) or `corner_rays`;
+- the corner rays as the method of `S6`. If notebook 4's offset band should stay selectable (its equivalence suite),
+  a switch `perimeter_method` (`offset_band` or `corner_rays`); whether the switch stays, and its default, is
+  Agata's call;
 - the corner-ray settings as new `Stage4Settings` fields in group `S6` (prefix them, for example
   `corner_band_m`), their home `default` with the package's defaults until `config/geometry.json` lands;
 - input: each building's footprint as Geometry cleaning left it (`geom_local`, local metres; courtyards allowed).
@@ -31,9 +37,12 @@ offset band and trapezoids, the `perimeter_*` settings, layers `perimeter` and `
   kept;
 - `until` gains `S6` ("Perimeter"), so "Apply to all" can stop after it like the other pages.
 
-Which perimeter the decomposition takes (Zones, later), and whether `corner_rays` becomes the default, are Agata's
-decisions. With corner rays the pieces handed to the decomposition would be the core parts and the perimeter zones
-that are not convex.
+What ConvexDecomp's decomposition takes from it (`convexdecomp.osm.perimeter_zones.corner_perimeter_record`, which
+needs pandas and geopandas besides the package): the perimeter zones in `perimeter_parts` with their roles
+(`perimeter_zone` or `thin_zone`) and the core parts in `interior_geom`; every zone and core part then goes to the
+decomposition as it is (a convex one comes back as one part, the others are cut); a footprint the procedure cannot
+zone is decomposed whole. On the 990 footprints with the engine at 1.2 m: 921 buildings fully convex, 69 with a
+zone the search could not cut, no area lost. Whether the workbench's Zones takes the same is Agata's decision.
 
 ## The page
 
@@ -59,7 +68,8 @@ default (`lo`, `hi`, `step`), the switch it `needs` and whether it is `advanced`
 The colours the note uses, if the page wants the same look: perimeter zone `#9ecae1` (edge `#08306b`), thin zone
 `#fcbba1` (edge `#cb181d`), core `#d9d9d9` hatched, a zone not convex dotted, band line `#2171b5`, rays from convex
 corners `#fd8d3c` and from reflex corners `#d94801`, merged rays `#1a9850`, corner-to-corner lines `#6a3d9a`,
-wing-end corners as a black cross.
+wing-end corners as a black cross; bay corners (their rays left out so the bay becomes one zone) need a mark of
+their own.
 
 `upto` (one of `STAGES`, titles in `STAGE_TITLES`; `STEPS` adds each step's rule number and functions) gives the
 state after any step, if the page wants to step through them.
@@ -75,8 +85,8 @@ the preview's numbers) for the run's table and `zone_records(result)` as a long 
 `kind` zone/thin/core, `area_m2`, `min_width_m`, `convex`, geometry). The memo key of the group: the cleaned
 footprint, the `S6` settings and the snapshot's commit.
 
-**Time.** About 0.01 s per building at the median and at most 0.45 s, 24 s for 990 buildings in one process on a
-quiet machine (load average about 30: median 0.03 s, at most 2.7 s).
+**Time.** At `dafdb78`, 990 buildings in 68 s in one process at a load average of about 12: median 0.02 s per
+building, at most 4.4 s (the wing-end and bay checks run the procedure again for some buildings). None failed.
 
 ## Checks for the task
 
@@ -85,11 +95,16 @@ quiet machine (load average about 30: median 0.03 s, at most 2.7 s).
 - On synthetic footprints (BEM4AI fixtures use synthetic ids only), with the default settings: a 20 m × 12 m
   rectangle gives 4 perimeter zones and 1 core part, all convex; a round building drawn as a regular 24-gon of
   radius 12 m gives 24 perimeter zones and 1 core part, no wing-end corner, and 24 wing-end corners with
-  `wing_end_parallel_deg = 180`; a 30 m square with a 10 m square courtyard in its middle gives 8 perimeter zones
-  and 1 core part. In every case the zones tile the footprint and keep every corner of its outline.
+  `wing_end_parallel_deg = 180` (then 1 perimeter zone, not convex, and the core); a 30 m square with a 10 m
+  square courtyard in its middle gives 8 perimeter zones and 1 core part. In every case the zones tile the footprint
+  and keep every corner of its outline. On the 990 footprints of the test sample, with the defaults: 7,249 perimeter
+  zones, 92 thinner than 2 m, 362 not convex, no corner under 20°, no speck under 0.5 m², 721 footprints with none
+  of these, 363 without a core.
 - The page in both profiles and at 1024, 1280 and 1500 px, in both themes, like the other step pages.
-- ConvexDecomp's own tests at the commit: `tests/test_corner_perimeter.py` and `test_corner_perimeter_tidy.py` (19 tests, nine real footprints with
-  their expected counts).
+- ConvexDecomp's own tests at the commit (outside `src/`, so not in the snapshot): `tests/test_corner_perimeter.py`
+  (15 tests, nine real footprints with their expected counts, with the defaults and with the short walls, bays and
+  tidy step off), `tests/test_corner_perimeter_tidy.py` (4) and `tests/test_perimeter_zones.py` (3, the hand-over to
+  the decomposition); all 22 pass at `dafdb78`.
 
 ## Touch points seen in `workbench` at `c54527a` (to be confirmed by the coordinator)
 
