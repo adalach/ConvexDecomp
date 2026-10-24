@@ -24,7 +24,7 @@ wrong tree. The monitoring only reads frame locals, so the traced run is the
 same run; `compare_with_untraced` checks that.
 
 The tools run against the source tree they live in: importing this module
-puts the repository's `src/` first on `sys.path`.
+puts the repository's `src/` first on `sys.path`, unless it is there already.
 """
 
 from __future__ import annotations
@@ -95,14 +95,18 @@ ENGINE = Engine(_decompose, _search.AdaptiveSearchConfig, _search._count_reflex_
 
 
 def bem4ai_notebook_config(**overrides: Any) -> Any:
-    """The decomposer settings BEM4AI notebook 4 (``BEM4AI_4_ModelTransformations``) runs.
+    """The search budget of BEM4AI notebook 4 (``BEM4AI_4_ModelTransformations``) on this engine.
 
     That notebook's ``CONVEX_DECOMP_CFG``, written out because the notebook is
     not importable: depth 24 and width 4 with an adaptive budget starting at
     depth 4 and width 3, 8 reflex vertices tried per piece, up to 32 variants
     and 500 dead ends, 2 m² smallest piece, part and compactness weights 1 and
-    20. A figure drawn with other settings shows another search. Keyword
-    arguments override single fields.
+    20. Everything it does not set keeps this engine's defaults (the beam
+    ranked by score first, the mid-angle cut at every reflex vertex, corners
+    of at least 30°, zones at least 1.2 m wide); ``PAPER_2026_SEARCH`` as
+    overrides gives the search of the EG-ICE 2026 paper. A figure drawn with
+    other settings shows another search. Keyword arguments override single
+    fields.
     """
     cfg = _decompose.ConvexDecompositionConfig(
         search_depth=24,
@@ -721,9 +725,14 @@ def trace_search(polygon: Polygon, cfg: Any = None, *, engine: Engine = ENGINE) 
 
     notes: List[str] = []
     if recorder.root is None:
-        # An already convex polygon never reaches the search.
+        # The polygon never reached the search: it is already convex, or it is refused as it is (not valid,
+        # or a convex polygon thinner than the zone width).
         root = SearchNode(index=0, pieces=(polygon,), depth=0, parent=None, number=0)
-        root.events.append((1, "success", None))
+        if stats.get("convex_success"):
+            root.events.append((1, "success", None))
+        else:
+            reason = str(stats.get("search_terminated_by") or "refused").replace("_", " ")
+            root.events.append((1, "dead_end", reason))
         recorder.nodes.append(root)
         recorder.root = root
     root = recorder.root

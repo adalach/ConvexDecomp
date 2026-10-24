@@ -4,7 +4,7 @@ const SCORE_CONTROLS = [
   { key: "weight_compactness", label: "Compactness weight w_C", min: 0, max: 60, step: 1, value: 20,
     help: "Weight of (1 − mean Polsby-Popper compactness). A square scores 0.785, a regular pentagon 0.865." },
   { key: "area_weighting", label: "Area weighting", min: 0, max: 1, step: 0.05, value: 0,
-    help: "How much a zone's area counts in the means: 1 = by area (as now, small zones hardly count), 0 = every zone the same." },
+    help: "How much a zone's area counts in the means: 1 = by area (the EG-ICE 2026 paper; small zones hardly count), 0 = every zone the same (the default)." },
   { key: "weight_rectangularity", label: "Rectangularity weight w_R", min: 0, max: 40, step: 1, value: 0,
     help: "Weight of (1 − mean area / enclosing-rectangle area). Adds to compactness, so long rectangles still lose." },
   { key: "weight_narrow", label: "Narrow-zone weight w_N", min: 0, max: 20, step: 0.5, value: 0,
@@ -17,13 +17,13 @@ const SCORE_CONTROLS = [
 
 const SEARCH_CONTROLS = [
   { key: "ranking", label: "Beam ranking", type: "select", value: "score_first",
-    options: [["reflex_first", "reflex vertices first (as now)"], ["score_first", "score first"]],
+    options: [["reflex_first", "reflex vertices first (EG-ICE 2026 paper)"], ["score_first", "score first"]],
     help: "What decides which states the beam keeps: fewest non-convex pieces and reflex vertices, with the score only breaking ties; or the score itself." },
   { key: "bisector_always", label: "Mid-angle cut at every reflex vertex", type: "toggle", value: true,
     help: "Offer the bisector of the corner as a third cut next to the two carried-on edges. Off: only where neither edge cut works." },
   { key: "min_corner_deg", label: "Smallest corner a cut may create (°)", min: 0, max: 45, step: 1, value: 30,
     help: "0 = off. A cut whose ends would leave a corner sharper than this is refused; the polygon's own sharp corners never block a cut." },
-  { key: "min_zone_width_m", label: "Thinnest zone allowed (m)", min: 0, max: 6, step: 0.1, value: 2,
+  { key: "min_zone_width_m", label: "Thinnest zone allowed (m)", min: 0, max: 6, step: 0.1, value: 1.2,
     help: "Hard rule: a cut that leaves a convex zone thinner than this is refused, never relaxed. 0 = off." },
   { key: "beam_area_weighting", label: "Area weighting of the beam's score", min: 0, max: 1, step: 0.05, value: 1,
     help: "The score that ranks unfinished states. 1 = by area: big non-convex remainders count fully, so the beam does not drop a neat cut too early. The variant is chosen with the score's own area weighting." },
@@ -48,25 +48,25 @@ const VIEW_CONTROLS = [
 ];
 
 const SCORE_PRESETS = [
-  ["Decided (default)", {}],
+  ["Default", {}],
   ["Paper 2026", { area_weighting: 1 }],
   ["+ rectangles 5", { weight_rectangularity: 5 }],
 ];
 const SEARCH_PRESETS = [
-  ["Decided (default)", {}],
+  ["Default", {}],
   ["Paper 2026", { ranking: "reflex_first", bisector_always: false, min_corner_deg: 0, min_zone_width_m: 0 }],
   ["Wide", { width: 8, max_reflex: 16, max_variants: 64 }],
 ];
 
 const R = 24; // node radius in the tree
-const PASTELS = ["#f6c89f", "#c5e1a5", "#ffd8e1", "#d7c4e8", "#fff1a8", "#b9e4dd", "#f4b6b6", "#cfd8dc",
-                 "#ffe0b2", "#dcedc8", "#e1bee7", "#b2ebf2"].filter((c) => c !== "#cfd8dc");
+const PASTELS = ["#f6c89f", "#c5e1a5", "#ffd8e1", "#d7c4e8", "#fff1a8", "#b9e4dd", "#f4b6b6",
+                 "#ffe0b2", "#dcedc8", "#e1bee7", "#b2ebf2"];
 const RING = { expanded: "#555", parked: "#0065bd", success: "#2e8540", dead_end: "#c4071b", duplicate: "#999",
                merged: "#999", active: "#888" };
 
 const state = {
   examples: [], data: null, byId: new Map(), kids: new Map(), selected: null,
-  open: new Set(), showAll: new Set(), seq: 0, stale: false, transform: null,
+  open: new Set(), showAll: new Set(), seq: 0, stale: false,
   values: { score: {}, search: {}, view: {} },
 };
 
@@ -266,14 +266,13 @@ function visibleHierarchy() {
     const item = { node: n, children: [] };
     if (!state.open.has(n.id)) return item;
     let kids = (state.kids.get(n.id) || []).filter((c) => v.duplicates || c.status !== "duplicate");
-    const hidden = (state.kids.get(n.id) || []).length - kids.length;
     if (!state.showAll.has(n.id) && kids.length > v.children) {
       const keep = [...kids].sort((a, b) => cmp(childOrder(a), childOrder(b))).slice(0, v.children);
       const keepSet = new Set(keep.map((k) => k.id));
       const more = kids.length - keep.length;
       kids = kids.filter((k) => keepSet.has(k.id));
       item.children = kids.map(build);
-      item.children.push({ more, parent: n.id, hiddenDuplicates: hidden });
+      item.children.push({ more, parent: n.id });
     } else {
       item.children = kids.map(build);
     }
@@ -337,10 +336,7 @@ function drawState(g, node, t, opts) {
 
 const svg = d3.select("#tree");
 const zoomLayer = svg.append("g");
-const zoom = d3.zoom().scaleExtent([0.05, 6]).on("zoom", (ev) => {
-  state.transform = ev.transform;
-  zoomLayer.attr("transform", ev.transform);
-});
+const zoom = d3.zoom().scaleExtent([0.05, 6]).on("zoom", (ev) => zoomLayer.attr("transform", ev.transform));
 svg.call(zoom).on("dblclick.zoom", null);
 
 function drawTree(refit = false) {
@@ -481,9 +477,9 @@ function drawSelected() {
   const metrics = n.pieces.map((pid) => ({ pid, ...state.data.pieces[pid] }));
   const p = state.values.score;
   const rows = metrics.map((m, i) => `<tr><td><span class="swatch fill" style="background:${m.convex ? pieceColour(m.pid) : "#3070b3"}"></span>${i + 1}</td>` +
-    `<td>${m.area.toFixed(1)}</td><td>${m.compactness.toFixed(2)}</td><td>${m.rectangularity.toFixed(2)}</td>` +
+    `<td class="${m.area < p.small_area_m2 ? "bad" : ""}">${m.area.toFixed(1)}</td><td>${m.compactness.toFixed(2)}</td><td>${m.rectangularity.toFixed(2)}</td>` +
     `<td class="${m.convex && m.width < p.narrow_width_m ? "bad" : ""}">${m.width.toFixed(2)}</td>` +
-    `<td class="${m.area < p.small_area_m2 ? "bad" : ""}">${m.convex ? "" : "no"}</td></tr>`).join("");
+    `<td>${m.convex ? "" : "no"}</td></tr>`).join("");
   box.innerHTML = `<h2>${item.title} <span class="hint">${n.status_lines.join(" · ")}</span></h2>` +
     (item.reference ? "" : `<div class="path">${pathOf(n).map((c, i) => `${i + 1}. ${c}`).join("<br>") || "the input polygon"}</div>`) +
     `<svg id="big" viewBox="0 0 350 300" width="100%" style="max-width:350px"></svg>` +

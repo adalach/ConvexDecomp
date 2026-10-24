@@ -87,7 +87,6 @@ h2 { font-size: 13px; margin: 6px 0 8px; font-weight: 600; }
 .edge { fill: none; stroke: #9a9a96; stroke-width: 1; }
 .edge.best { stroke: #333; stroke-width: 3.5; }
 .edge.duplicate { stroke-dasharray: 3 3; }
-.edge-label { font-size: 8.5px; fill: #444; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; text-anchor: middle; }
 .more rect { fill: #fff; stroke: #aaa; stroke-dasharray: 2 2; }
 .more text { font-size: 10px; fill: var(--muted); text-anchor: middle; }
 .more { cursor: pointer; }

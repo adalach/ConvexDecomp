@@ -189,7 +189,8 @@ class ConvexDecompositionConfig:
         passes, the bisector is tried instead. The rule is hard: a footprint
         that cannot be cut into zones this wide, including a convex one that is
         itself thinner, gets no decomposition. When no cut of a piece passes
-        the corner rule, only that rule is relaxed.
+        the corner rule, only that rule is relaxed. The default, 1.2 m, is the
+        narrowest core the corner-ray perimeter keeps.
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
@@ -214,7 +215,7 @@ class ConvexDecompositionConfig:
     beam_ranking: str = "score_first"
     bisector_always: bool = True
     min_corner_deg: float = 30.0
-    min_zone_width_m: float = 2.0
+    min_zone_width_m: float = 1.2
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:

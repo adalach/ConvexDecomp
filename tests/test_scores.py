@@ -139,7 +139,7 @@ def test_min_zone_width_is_a_hard_rule():
 def test_the_defaults_are_the_decided_settings():
     cfg = ConvexDecompositionConfig()
     assert (cfg.area_weighting, cfg.beam_area_weighting, cfg.beam_ranking, cfg.bisector_always,
-            cfg.min_corner_deg, cfg.min_zone_width_m) == (0.0, 1.0, "score_first", True, 30.0, 2.0)
+            cfg.min_corner_deg, cfg.min_zone_width_m) == (0.0, 1.0, "score_first", True, 30.0, 1.2)
     # An L shape becomes two rectangles; a courtyard building four.
     from test_openings import ROTATED
     for poly, n in ((L_SHAPE, 2), (ROTATED, 4)):

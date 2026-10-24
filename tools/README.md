@@ -7,7 +7,7 @@ tracer observes the search with `sys.monitoring`.
 
 | File | What it is |
 | --- | --- |
-| `search_trace.py` | The tracer. `trace_search(polygon, cfg)` runs `convexdecomp.osm.decompose.decompose_polygon_with_stats` and records every state of the search: the cut that made it (edge labels as the engine names them, `r4 prev`, `r4 bis`, `h1 prev + h2 next` for the opening of a hole), the pools it went through (active, overflow, deferred), and what became of it (expanded, success, dead-end, duplicate). The engine is not changed: its functions are wrapped for the length of one call, and `compare_with_untraced` checks that the traced run chose the same variant with the same counts. `bem4ai_notebook_config()` gives the settings BEM4AI notebook 4 runs. |
+| `search_trace.py` | The tracer. `trace_search(polygon, cfg)` runs `convexdecomp.osm.decompose.decompose_polygon_with_stats` and records every state of the search: the cut that made it (edge labels as the engine names them, `r4 prev`, `r4 bis`, `h1 prev + h2 next` for the opening of a hole), the pools it went through (active, overflow, deferred), and what became of it (expanded, success, dead-end, duplicate). The engine is not changed: its functions are wrapped for the length of one call, and `compare_with_untraced` checks that the traced run chose the same variant with the same counts. `bem4ai_notebook_config()` gives the search budget BEM4AI notebook 4 runs, with this engine's defaults for the rest. |
 | `search_tree_figure.py` | Draws a traced search as the tree of the EG-ICE 2026 search-tree figure: a badge per state with the piece being decomposed in colour, the cut on every edge, legend and statistics. PDF, SVG or PNG. |
 | `search_explorer/` | A local web app that runs the traced search with the score and search settings on sliders and shows the tree and the ranked variants. See its README. |
 | `import_bem4ai_footprints.py` | Draws a random sample of the BEM4AI Stage 3 footprints and writes it as the input of `OSM_1_Preprocessing.ipynb`: the OSM outline as mapped (WGS84, not repaired), read again from BEM4AI's city extract and checked against the fingerprint BEM4AI recorded, plus BEM4AI's cleaned footprint, with the metric CRS of each city. Runs in BEM4AI's own environment, because it uses BEM4AI's reader and fingerprint. |
@@ -23,7 +23,7 @@ python tools/search_tree_figure.py --input footprint.wkt -o tree.pdf tree.png
 python tools/search_tree_figure.py --sample-id Gorzow_Wielkopolski_0007 --input-index 2 -o gorzow.pdf
 ```
 
-The settings default to those BEM4AI notebook 4 runs; `--depth`, `--width`, `--min-area`,
+The settings default to the budget BEM4AI notebook 4 runs, with this engine's defaults for the rest; `--depth`, `--width`, `--min-area`,
 `--ranking`, `--bisector-always`, `--min-corner` and others override them. Large trees are cut
 down to `--max-nodes` states (default 60, `0` for all) and `--max-children` per state, with the
 path to the chosen variant always kept and what is left out shown as "+N more". `--attempt K`
@@ -49,7 +49,8 @@ otherwise.
 
 | File | What it is |
 | --- | --- |
-| `note_figures.py` | The figures of the note "Convex Decomposition Perimeter", one SVG per step (`--out` the note's attachments, `--png` small previews). |
+| `note_figures.py` | The figures of the package README and of the note "Convex Decomposition Perimeter", one SVG per step (`--out docs/corner_perimeter` or the note's attachments, `--png` small previews). |
+| `pipeline_diagram.py` | The pipeline diagram of the package README (`docs/corner_perimeter/perimeter_pipeline.svg`). |
 | `run_sample.py` | Every footprint of the sample with the chosen settings or others (`--set wing_end_max_m=0`): `run.csv`, `zones.gpkg`, `run.log` with the totals, `--sheets` for contact sheets of the worst and of random footprints. |
 | `compare_variants.py` | The chosen settings against variants with one choice changed, on the 23 footprints with the most reflex corners (`--n 0`: all); `--draw <variant>` draws the footprints where it differs. |
 | `overview.py` | Lines and zones of footprints side by side, with how often each step acted (default: the three test footprints). |
@@ -75,8 +76,9 @@ second is missing.
 
 ## Tests
 
-`tests/test_corner_perimeter.py` checks the corner-ray perimeter on four real footprints, the wing ends, simple
-shapes, every stage, the settings and the preview.
+`tests/test_corner_perimeter.py` and `tests/test_corner_perimeter_tidy.py` check the corner-ray perimeter on nine real
+footprints, the wing ends, bays, the tidy step, simple shapes, every stage, the settings and the preview;
+`tests/test_perimeter_zones.py` its run over a table of footprints for the OSM decomposition notebook.
 
 `tests/test_search_trace.py` checks that traced and untraced runs agree on an L shape, a
 courtyard and a bent band, that every recorded success covers its polygon, and that the

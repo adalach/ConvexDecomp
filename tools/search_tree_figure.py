@@ -75,7 +75,7 @@ _PT = 25.4 / 72.0  # mm per point
 
 @dataclass(frozen=True)
 class FigureStyle:
-    """Sizes and colours. Colours follow the paper figure; text follows Agata's figure style."""
+    """Sizes and colours. Colours follow the paper figure; text follows the TUM paper-figure style."""
 
     radius: float = 8.0  # badge radius, mm
     thumb_fill: float = 0.78  # longest side of the thumbnail, as a share of the badge diameter
@@ -178,9 +178,8 @@ def _select_nodes(
 
     The path to the chosen variant is always drawn, depth limit permitting.
     After that the states the search expanded come first, then the rest, each
-    in generation order, so a
-    truncated figure shows where the search went rather than a sample of what
-    it left lying. `max_children` caps how many children of one state are
+    in generation order, so a truncated figure shows where the search went
+    rather than a sample of what it left lying. `max_children` caps how many children of one state are
     drawn, so a state with fifty ways to cut it does not swallow the figure.
     """
 
@@ -1146,8 +1145,6 @@ def draw_search_tree(
     return figure.draw()
 
 
-
-
 # ---------------------------------------------------------------------------
 # Input polygons
 # ---------------------------------------------------------------------------
@@ -1218,7 +1215,7 @@ def gpkg_polygon(sample_id: str, input_index: int = 0, path: Path | str = DEFAUL
 
 
 def _config_from_args(args: argparse.Namespace) -> Any:
-    """Notebook-4 settings, with what the command line overrides."""
+    """The settings of `bem4ai_notebook_config()`, with what the command line overrides."""
     base = bem4ai_notebook_config()
     adaptive = base.adaptive_search
     depth = args.depth if args.depth is not None else base.search_depth
@@ -1241,7 +1238,7 @@ def _config_from_args(args: argparse.Namespace) -> Any:
         overrides["max_variants_per_polygon"] = args.max_variants
     if args.max_failed is not None:
         overrides["max_failed_states"] = args.max_failed
-    for option, value in (("beam_ranking", args.ranking), ("bisector_always", args.bisector_always or None),
+    for option, value in (("beam_ranking", args.ranking), ("bisector_always", args.bisector_always),
                           ("min_corner_deg", args.min_corner)):
         if value is None:
             continue
@@ -1258,11 +1255,14 @@ def _input_polygon(args: argparse.Namespace) -> Tuple[Polygon, Optional[str]]:
     polygons = load_polygons(args.input)
     if not polygons:
         raise SystemExit("no polygon in the input")
+    wkt_text = args.input.strip().upper().startswith(("POLYGON", "MULTIPOLYGON", "GEOMETRYCOLLECTION"))
+    note = None if wkt_text else Path(args.input).name
     if args.polygon_index is not None:
-        return polygons[args.polygon_index], None
+        if not 0 <= args.polygon_index < len(polygons):
+            raise SystemExit(f"--polygon-index {args.polygon_index}: the input has {len(polygons)} polygons")
+        return polygons[args.polygon_index], note
     if len(polygons) > 1:
         print(f"{len(polygons)} polygons in the input; drawing the largest (--polygon-index to choose)")
-    note = None if args.input.strip().upper().startswith(("POLYGON", "MULTIPOLYGON")) else Path(args.input).name
     return max(polygons, key=lambda p: p.area), note
 
 
@@ -1281,18 +1281,17 @@ def _rc():
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Draw the beam-search tree of the convex decomposer for one polygon.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+    parser = argparse.ArgumentParser(description="Draw the beam-search tree of the convex decomposer for one polygon.")
     src = parser.add_argument_group("input polygon (one of)")
     src.add_argument("--input", help="a WKT string, or a .wkt/.txt, .geojson/.json or .wkb file")
     src.add_argument("--polygon-index", type=int, help="which polygon of a multi-polygon input (default: the largest)")
     src.add_argument("--sample-id", help="a building of the BEM4AI decomposition inputs (--gpkg)")
-    src.add_argument("--input-index", type=int, default=0, help="which of the building's decomposition inputs")
-    src.add_argument("--gpkg", default=str(DEFAULT_GPKG), help="the BEM4AI decomposition inputs")
+    src.add_argument("--input-index", type=int, default=0, help="which of the building's decomposition inputs (0)")
+    src.add_argument("--gpkg", default=str(DEFAULT_GPKG),
+                     help="the BEM4AI decomposition inputs (data/bem4ai/decomposition_inputs.gpkg, local only)")
 
-    search = parser.add_argument_group("decomposer settings (default: those BEM4AI notebook 4 runs)")
+    search = parser.add_argument_group(
+        "decomposer settings (default: the budget BEM4AI notebook 4 runs, this engine's defaults for the rest)")
     search.add_argument("--depth", type=int, help="maximum search depth (24)")
     search.add_argument("--width", type=int, help="maximum beam width (4)")
     search.add_argument("--initial-depth", type=int, help="first depth of the adaptive schedule (4)")
@@ -1302,12 +1301,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     search.add_argument("--max-variants", type=int, help="stop after this many successes (32)")
     search.add_argument("--max-failed", type=int, help="stop after this many dead-ends (500)")
     search.add_argument("--ranking", choices=("reflex_first", "score_first"), help="how the beam orders states")
-    search.add_argument("--bisector-always", action="store_true", help="offer the mid-angle cut at every reflex vertex")
+    search.add_argument("--bisector-always", action=argparse.BooleanOptionalAction,
+                        help="offer the mid-angle cut at every reflex vertex, or only where no edge cut works")
     search.add_argument("--min-corner", type=float, help="smallest corner a cut may create, degrees")
 
     fig = parser.add_argument_group("figure")
     fig.add_argument("-o", "--output", nargs="+", required=True, help="output file(s): .pdf, .svg, .png")
-    fig.add_argument("--max-nodes", type=int, default=60, help="draw at most this many states (0: no limit)")
+    fig.add_argument("--max-nodes", type=int, default=60, help="draw at most this many states (60; 0: no limit)")
     fig.add_argument("--max-depth", type=int, help="draw states down to this depth only")
     fig.add_argument("--max-children", type=int,
                      help="draw at most this many children per state (default 12, none with --max-nodes 0; 0: no limit)")
@@ -1315,7 +1315,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     fig.add_argument("--compact-root", action="store_true", help="caption the root like any other state")
     fig.add_argument("--attempt", type=int, help="draw the tree as it stood after this budget attempt")
     fig.add_argument("--each-attempt", action="store_true", help="also write one figure per attempt (<name>_attemptK)")
-    fig.add_argument("--dpi", type=int, default=300, help="resolution of .png output")
+    fig.add_argument("--dpi", type=int, default=300, help="resolution of .png output (300)")
     fig.add_argument("--no-check", action="store_true", help="skip the comparison with an untraced run")
     args = parser.parse_args(argv)
 

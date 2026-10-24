@@ -91,7 +91,7 @@ class SearchParams(BaseModel):
     adaptive: bool = True
     bisector_always: bool = True
     min_corner_deg: float = Field(30.0, ge=0, le=45)
-    min_zone_width_m: float = Field(2.0, ge=0, le=10)
+    min_zone_width_m: float = Field(1.2, ge=0, le=10)
     beam_area_weighting: float = Field(1.0, ge=0, le=1)
 
 

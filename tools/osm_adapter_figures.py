@@ -5,7 +5,10 @@ Runs the adapter (`convexdecomp.osm.preprocess.run_adapter`, level L2, the noteb
 the BEM4AI sample, and writes one SVG per figure plus ``osm_adapter_numbers.json`` with the counts
 the note quotes::
 
-    python tools/osm_adapter_figures.py --out /path/to/attachments
+    python tools/osm_adapter_figures.py --out /path/to/attachments [--sample <gpkg>]
+
+The sample defaults to ``data/bem4ai/osm_footprints_bem4ai_sample.gpkg`` (local only), which
+``tools/import_bem4ai_footprints.py`` writes.
 """
 
 from __future__ import annotations
@@ -33,7 +36,8 @@ from shapely.ops import unary_union  # noqa: E402
 from convexdecomp.osm.axes import AxesSettings, facade_steps, residual_steps, snap_to_axes  # noqa: E402
 from convexdecomp.osm.footprints import footprint_shapes  # noqa: E402
 from convexdecomp.osm.normalize import count_exterior_vertices  # noqa: E402
-from convexdecomp.osm.preprocess import AdapterSettings, reflex_vertex_counts, run_adapter  # noqa: E402
+from convexdecomp.osm.preprocess import (AdapterSettings, bem4ai_comparison, load_sample, local_frame_step,  # noqa: E402
+                                         reflex_vertex_counts, run_adapter, thin_parts_step, vertices_step)
 from convexdecomp.osm.rules import load_rules  # noqa: E402
 
 SAMPLE = ROOT / "data" / "bem4ai" / "osm_footprints_bem4ai_sample.gpkg"
@@ -169,7 +173,7 @@ def fig_gallery(raw, out, n=30, seed=7, half=50.0):
     save(fig, out, "osm_sample_gallery")
 
 
-def fig_axes(rows, out, settings):
+def fig_axes(rows, out):
     fig, axes = panels(len(rows), 4, size=1.9)
     for ax, (sid, row) in zip(axes, rows.iterrows()):
         geom, axes_ = row["geom_local_thin"], row["axes"]
@@ -360,19 +364,21 @@ def parameter_study(inputs: np.ndarray) -> tuple[pd.DataFrame, dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--sample", type=Path, default=SAMPLE, help="the footprint sample (GeoPackage)")
     args = parser.parse_args()
+    if not args.sample.exists():
+        raise SystemExit(f"{args.sample} not found: write it with tools/import_bem4ai_footprints.py, or pass --sample")
     args.out.mkdir(parents=True, exist_ok=True)
     warnings.filterwarnings("ignore")
 
     rules = load_rules()
-    run = run_adapter(SAMPLE, rules, AdapterSettings())
+    run = run_adapter(args.sample, rules, AdapterSettings())
     gdf = run.footprints.set_index("sample_id", drop=False)
     final = run.final.set_index("sample_id", drop=False)
     funnel = run.funnel.set_index("sample_id", drop=False)
 
     # The whole sample in its local frame, for the input figures.
-    from convexdecomp.osm.preprocess import bem4ai_comparison, load_sample, local_frame_step
-    raw = local_frame_step(load_sample(SAMPLE))
+    raw = local_frame_step(load_sample(args.sample))
     raw = raw.join(bem4ai_comparison(raw)).set_index("sample_id", drop=False)
     raw["n_vertices_raw"] = raw["geom_local_raw"].map(count_exterior_vertices)
     raw["n_reflex_raw"] = reflex_vertex_counts(raw["geom_local_raw"].to_numpy())
@@ -412,7 +418,7 @@ def main() -> int:
         "bem4ai_hausdorff_q": raw["bem4ai_hausdorff_m"].quantile([0.5, 0.9, 0.99, 1.0]).round(3).tolist(),
         "bem4ai_area_abs_max_pct": round(float(raw["bem4ai_area_change_pct"].abs().max()), 3),
         "bem4ai_area_abs_top": raw["bem4ai_area_change_pct"].abs().sort_values(ascending=False).head(3).round(3).to_dict(),
-        "vertices_removed": int(gdf["vertices_removed"].sum()) if "vertices_removed" in gdf else 0,
+        "vertices_removed": int(gdf["vertices_removed"].sum()),
         "vertices_removed_footprints": int((gdf["vertices_removed"] > 0).sum()),
         "thin_cut": int((gdf["thin_part_share"] > 0).sum()),
         "thin_cut_m2": float((gdf["geom_local_vertices"].map(lambda p: p.area) - gdf["geom_local_thin"].map(lambda p: p.area)).sum()),
@@ -473,7 +479,6 @@ def main() -> int:
                                     f"{count_exterior_vertices(r['geom_local_vertices'])} vertices")
 
     # The footprints the thin-part check removes: their state before step 4 and the cut.
-    from convexdecomp.osm.preprocess import thin_parts_step, vertices_step
     removed = raw.loc[numbers["removed_thin_parts_ids"]]
     removed = thin_parts_step(vertices_step(removed, AdapterSettings()), rules, AdapterSettings()).set_index("sample_id", drop=False)
     removed = removed.sort_values("thin_part_share", ascending=False)
@@ -488,7 +493,7 @@ def main() -> int:
     moved = gdf.assign(axes_moved=shapely.hausdorff_distance(gdf["geom_local_thin"].to_numpy(), gdf["geom_local"].to_numpy()))
     a_pool = moved.loc[moved["n_directions"].between(2, 4) & moved["geom_local_thin"].map(count_exterior_vertices).between(8, 20)]
     a_ids = a_pool.sort_values("axes_moved", ascending=False).index[:4].tolist()
-    fig_axes(moved.loc[a_ids], args.out, AdapterSettings().axes)
+    fig_axes(moved.loc[a_ids], args.out)
     n_ids = moved.sort_values("axes_moved", ascending=False).index[:8].tolist()
     fig_before_after(moved.loc[n_ids], "geom_local_thin", "geom_local", args.out, "osm_normalization_examples",
                      lambda sid, r: f"{sid}\n{count_exterior_vertices(r['geom_local_thin'])} → "
@@ -498,7 +503,7 @@ def main() -> int:
     seq = list(dict.fromkeys([
         final.sort_values("fidelity_hausdorff_m", ascending=False).index[0],
         moved.loc[final.index].sort_values("axes_moved", ascending=False).index[0],
-        final.loc[final["geom_local"].map(lambda p: len(p.interiors) > 0)].index[0],
+        *final.loc[final["geom_local"].map(lambda p: len(p.interiors) > 0)].index[:1],
         final.iloc[(final["n_reflex"] - 4).abs().argsort()].index[0],
     ]))
     fig_stage_sequence(gdf, seq, args.out)
