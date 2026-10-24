@@ -36,7 +36,7 @@ TEST_IDS = ("Valdemoro_0001", "Krakow_0013", "Bognor_Regis_0005")
 RAY_CONVEX, RAY_REFLEX = "#fd8d3c", "#d94801"
 BAND_FILL, BAND_LINE = "#deebf7", "#2171b5"
 PINK = "#e7298a"
-LINE_STYLE = {"merged": dict(color="#6a3d9a", linewidth=1.8), "apex": dict(color="#1a9850", linewidth=1.8)}
+LINE_STYLE = {"corner_line": dict(color="#6a3d9a", linewidth=1.8), "merged_ray": dict(color="#1a9850", linewidth=1.8)}
 ZONE_STYLE = {
     "zone": dict(facecolor="#9ecae1", edgecolor="#08306b"),
     "thin": dict(facecolor="#fcbba1", edgecolor="#cb181d"),
@@ -54,11 +54,11 @@ LEGEND = {
     "outline": Line2D([], [], color="k", lw=1.3, label="footprint"),
     "band": Patch(facecolor=BAND_FILL, label=f"{CornerRayConfig().band_m:g} m perimeter band"),
     "band_line": Line2D([], [], color=BAND_LINE, lw=1.1, label="band line"),
-    "band0": Line2D([], [], color="#969696", lw=0.8, ls="--", label="band line before rule 4"),
+    "offset_band_line": Line2D([], [], color="#969696", lw=0.8, ls="--", label="band line before rule 4"),
     "ray": Line2D([], [], color=RAY_CONVEX, lw=0.9, label="ray from a convex corner"),
     "ray_r": Line2D([], [], color=RAY_REFLEX, lw=0.9, label="ray from a reflex corner"),
-    "merged": Line2D([], [], color="#6a3d9a", lw=1.8, label="corner-to-corner line (rule 2)"),
-    "apex": Line2D([], [], color="#1a9850", lw=1.8, label="merged ray (rule 1)"),
+    "corner_line": Line2D([], [], color="#6a3d9a", lw=1.8, label="corner-to-corner line (rule 2)"),
+    "merged_ray": Line2D([], [], color="#1a9850", lw=1.8, label="merged ray (rule 1)"),
     "x_ray": Line2D([], [], ls="none", marker="o", color="#cb181d", label="ray x ray"),
     "x_band": Line2D([], [], ls="none", marker="s", color="#08519c", label="ray x band line"),
     "x_end": Line2D([], [], ls="none", marker="o", mfc="white", mec="#525252", label="ray end on facade"),
@@ -117,7 +117,7 @@ def draw_lines(ax, r, win, old_band: bool = False, diagonals: bool = False) -> N
     plot_polygon(r.band, ax=ax, add_points=False, facecolor=BAND_FILL, edgecolor="none")
     plot_polygon(r.poly, ax=ax, add_points=False, facecolor="none", edgecolor="k", linewidth=1.3)
     if old_band:
-        plot_line(r.band0, ax=ax, add_points=False, color="#969696", linewidth=0.8, linestyle="--")
+        plot_line(r.offset_band_line, ax=ax, add_points=False, color="#969696", linewidth=0.8, linestyle="--")
     if not r.band_line.is_empty:
         plot_line(r.band_line, ax=ax, add_points=False, color=BAND_LINE, linewidth=1.1)
     for ln in r.lines:

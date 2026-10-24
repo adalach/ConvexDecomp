@@ -38,10 +38,10 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
     ("zones", "Close points and narrow zones",
      "Rule 5: zone corners close to each other become one; it runs again after rule 6 with a longer reach. Rule 6: "
      "a narrow four-cornered zone gives way to its shorter diagonal."),
-    ("tiny", "Tiny zones and sharp corners",
+    ("thin", "Thin zones, sharp corners and specks",
      "Rule 7: zones thinner than the zone width that touch become one convex zone. Rule 8: a lone thin zone merges "
      "into a neighbour, after relinking one of its edges if needed. Rule 9: very sharp zone corners are cut off. "
-     "Rule 10: specks join a neighbour. Rules 9, 7, 8 and 10 repeat until nothing changes."),
+     "Rule 10: specks join a neighbour. Rules 9, 7, 8 and 10 and the tidy step repeat until nothing changes."),
     ("tidy", "Tidy zone corners",
      "After each round of rules 9, 7, 8 and 10: inner zone corners close to an outline point move onto it, close "
      "inner corners become one, corners within a few degrees of straight are straightened and points straight in "
@@ -61,11 +61,8 @@ def setting(default: Any, *, section: str, title: str, help: str, unit: str | No
 
 @dataclass(frozen=True)
 class CornerRayConfig:
-    """Every threshold of the corner-ray perimeter. The defaults are the settings chosen on 2026-10-20, with the
-    narrowest core raised from 1 m to 1.2 m on 2026-10-23 and the fixes of that day switched on (the wing-end
-    check, rule 7's width check, rule 10 and the repeat until nothing changes), and since 2026-10-24 one ray per
-    short wall, the bays and the tidying of zone corners, with rule 7 looking ahead before it gives up a hull and
-    rule 9 handing over a whole triangle only where a cut would run away or the merge is convex."""
+    """Every threshold and switch of the corner-ray perimeter; the defaults are the chosen settings, every step
+    switched on. Values outside a field's ``ge``/``le`` raise ``ValueError``."""
 
     # band and rays
     band_m: float = setting(
@@ -234,39 +231,40 @@ class CornerRayConfig:
         help="Rule 6: a four-cornered perimeter zone narrower than this, with a perimeter zone across each long "
              "side, gives way to its shorter diagonal.")
 
-    # tiny zones and sharp corners (rules 7 to 9)
+    # thin zones, sharp corners and specks (rules 7 to 10)
     min_zone_width_m: float = setting(
-        2.0, section="tiny", title="Zone width", unit="m", ge=0.0, le=10.0, lo=0.0, hi=4.0, step=0.05,
+        2.0, section="thin", title="Zone width", unit="m", ge=0.0, le=10.0, lo=0.0, hi=4.0, step=0.05,
         help="A perimeter zone narrower than this is thin: rules 7 and 8 merge thin zones, and a merge must leave "
              "a zone at least this wide.")
     relink_m: float = setting(
-        4.0, section="tiny", title="Relink reach", unit="m", ge=0.0, le=20.0, lo=0.0, hi=8.0, step=0.25,
+        4.0, section="thin", title="Relink reach", unit="m", ge=0.0, le=20.0, lo=0.0, hi=8.0, step=0.25,
         help="Rule 8: an inner edge of a lone thin zone may move one end to a zone corner this close, so the zone "
              "can merge into a neighbour.")
     sharp_corner_deg: float = setting(
-        20.0, section="tiny", title="Sharp corner", unit="deg", ge=0.0, le=60.0, lo=0.0, hi=45.0, step=1.0,
+        20.0, section="thin", title="Sharp corner", unit="deg", ge=0.0, le=60.0, lo=0.0, hi=45.0, step=1.0,
         help="Rule 9: a zone corner sharper than this is cut off; the zone across its shorter edge takes the tip.")
     sharp_keep_convex: bool = setting(
-        False, section="tiny", title="Keep convex zones convex", advanced=True,
+        False, section="thin", title="Keep convex zones convex", advanced=True,
         help="Rule 9: skip a cut that would make the convex zone taking the tip non-convex.")
-    repeat_tiny_after_sharp: bool = setting(
-        True, section="tiny", title="Merge tiny zones again", advanced=True,
+    repeat_thin_after_sharp: bool = setting(
+        True, section="thin", title="Merge thin zones again", advanced=True,
         help="Rules 7 and 8 run once more after rule 9, for thin zones its cuts leave.")
     hull_keeps_width: bool = setting(
-        True, section="tiny", title="Hull keeps its neighbours wide",
+        True, section="thin", title="Hull keeps its neighbours wide",
         help="Rule 7: a zone giving area to the convex hull of merged thin zones must stay at least the zone width "
-             "wide (a core part the narrowest core). Where one would not, the thin zones merge without the hull, "
-             "into a zone that is not convex.")
+             "wide (a core part the narrowest core), unless rules 7 and 8 then merge it. Where it would stay "
+             "thinner, the thin zones merge without the hull, into a zone that is not convex.")
     join_specks: bool = setting(
-        True, section="tiny", title="Specks join a neighbour",
+        True, section="thin", title="Specks join a neighbour",
         help="Rule 10: a perimeter zone smaller than the speck area joins the neighbour it shares the longest edge "
              "with, even if the union is not convex; a zone without area is dropped.")
     speck_m2: float = setting(
-        0.5, section="tiny", title="Speck", unit="m²", ge=0.0, le=10.0, lo=0.0, hi=2.0, step=0.05,
+        0.5, section="thin", title="Speck", unit="m²", ge=0.0, le=10.0, lo=0.0, hi=2.0, step=0.05,
         needs="join_specks", help="Rule 10: a perimeter zone smaller than this is a speck.")
     repeat_until_stable: bool = setting(
-        True, section="tiny", title="Repeat until nothing changes", advanced=True,
-        help="Rules 9, 7, 8 and 10 run again, in turn, until the zones no longer change (at most 8 rounds).")
+        True, section="thin", title="Repeat until nothing changes", advanced=True,
+        help="Rules 9, 7, 8 and 10 and the tidy step run again, in turn, until the zones no longer change (at "
+             "most 8 rounds).")
 
     # tidy zone corners
     snap_to_outline: bool = setting(

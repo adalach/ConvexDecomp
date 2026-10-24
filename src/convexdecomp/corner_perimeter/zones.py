@@ -1,9 +1,14 @@
-"""The zones: the lines joined and the footprint cut into zones, then rules 5 to 9 on the zones.
+"""The zones: the lines joined and the footprint cut into zones (:func:`form_zones`), then rules 5 to 10 on them.
 
-Rule 5 merges close zone corners (twice: before rule 6 and after it with a longer reach), rule 6 replaces narrow
-four-cornered zones by their shorter diagonal, rule 7 merges thin zones that touch, rule 8 merges a lone thin zone
-into a neighbour (after a relink if needed), rule 9 cuts off sharp corners. No step moves a point of the footprint's
-outline, so the zones always tile the footprint exactly.
+- Rule 5, close points become one (:func:`merge_close_points`), runs twice: before rule 6 and after it with a
+  longer reach.
+- Rule 6, narrow zones give way to a diagonal (:func:`narrow_zones_to_diagonals`).
+- Rule 7, touching thin zones merge (:func:`merge_touching_thin_zones`).
+- Rule 8, lone thin zones merge into a neighbour (:func:`merge_lone_thin_zones`).
+- Rule 9, sharp corners are cut off (:func:`cut_sharp_corners`).
+- Rule 10, specks join a neighbour (:func:`join_specks`).
+
+No step moves a point of the footprint's outline, so the zones always tile the footprint exactly.
 """
 
 from __future__ import annotations
@@ -12,19 +17,34 @@ from dataclasses import replace
 
 import numpy as np
 import shapely
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString, Polygon
 from shapely.geometry.polygon import orient
 from shapely.ops import polygonize
 
 from convexdecomp.core.scores import minimum_width
 
-from .geometry import (EPS, Line, clean_ring, convex_corners, insert_point, is_convex, kind_of, one_polygon,
-                       outline_corners, polygons, shared_length, shares_edge, unit, zone_across)
+from .geometry import (EPS, Line, clean_ring, close_groups, convex_corners, corner_points, insert_point, is_convex,
+                       kind_of, one_polygon, outline_corners, polygons, shared_length, shares_edge,
+                       sharp_corner_count, unit, zone_across)
 from .settings import CornerRayConfig
+
+#: rules 9 and 10 find the zone across an edge within this distance: edges that agree only to rounding, or where one
+#: carries a point the other does not, still count as shared
+ACROSS_TOL = 1e-6
 
 
 class PerimeterError(RuntimeError):
     """The zones would not tile the footprint."""
+
+
+def form_zones(poly: Polygon, core, spines: list[LineString], lines: list[Line], cfg: CornerRayConfig):
+    """The zones: the lines are noded on each other (:func:`node_lines`) and cut the footprint into faces
+    (:func:`zones_from`), each a perimeter zone (``zone``, or ``thin`` when narrower than ``min_zone_width_m``) or a
+    core part (``core``). Returns the zones, the core, the band line (core outline and spines) and the lines."""
+    core, spines, lines, facade = node_lines(poly, core, spines, lines)
+    band_line = shapely.union_all([core.boundary, *spines]) if not core.is_empty or spines else LineString()
+    zones = zones_from(poly, core, [*facade, band_line, *(ln.geom for ln in lines)], cfg.min_zone_width_m)
+    return zones, core, band_line, lines
 
 
 def node_lines(poly: Polygon, core, spines: list[LineString], lines: list[Line]):
@@ -105,34 +125,15 @@ def zones_from(poly: Polygon, core, linework: list, min_width_m: float) -> list[
     return out
 
 
-def merge_vertex_groups(poly: Polygon, zones: list[tuple[Polygon, str]], tol: float, span: float,
-                        min_width_m: float):
-    """Rule 5, and rule 5 again with a longer reach: zone corners gathered in one place become one
-    vertex in their middle. Groups grow from the closest pairs (closer than tol), up to span
-    across. Points on the outline (footprint corners, line ends on the facade) are left alone:
-    never moved, never merged. A group is skipped if moving it would make a zone invalid or break
-    the tiling. Returns the zones and the merged vertices."""
-    corners_xy = outline_corners(poly)
-    pts = list(corners_xy)
-    for z, _ in zones:
-        for p in clean_ring(np.asarray(orient(z, 1.0).exterior.coords)[:-1]):
-            if np.min(np.linalg.norm(np.asarray(pts) - p, axis=1)) > 1e-7:
-                pts.append(p)
-    pts = np.asarray(pts)
-    corner = np.arange(len(pts)) < len(corners_xy)
-    fixed = corner | np.array([poly.boundary.distance(Point(p)) < EPS for p in pts])  # the outline
-    d = np.linalg.norm(pts[:, None] - pts[None], axis=2)
-    group = {i: [i] for i in range(len(pts))}  # members of the group each point is in
-    for i, j in sorted(zip(*np.nonzero(np.triu(d < tol, 1))), key=lambda ij: d[ij]):
-        gi, gj = group[i], group[j]
-        if gi is gj or fixed[i] or fixed[j]:
-            continue
-        both = gi + gj
-        if d[np.ix_(both, both)].max() > span:
-            continue
-        for k in both:
-            group[k] = both
-    groups = {id(g): g for g in group.values() if len(g) > 1}.values()
+def merge_close_points(poly: Polygon, zones: list[tuple[Polygon, str]], reach_m: float, span_m: float,
+                       min_width_m: float):
+    """Rule 5 (``close_points_m``, any span), and rule 5 again (``corner_group_m``, ``corner_group_span_m``): zone
+    corners gathered in one place become one vertex in their middle. Groups grow from the closest pairs (closer than
+    reach_m), up to span_m across (:func:`~.geometry.close_groups`). Points on the outline (footprint corners, line
+    ends on the facade) are left alone: never moved, never merged. A group is skipped if moving it would make a zone
+    invalid or break the tiling. Returns the zones and the merged vertices."""
+    pts, fixed = corner_points(poly, zones)
+    groups = close_groups(pts, fixed, reach_m, span_m)
 
     def node(c: np.ndarray) -> np.ndarray:
         """The ring c with every point that lies on one of its edges inserted."""
@@ -178,7 +179,7 @@ def merge_vertex_groups(poly: Polygon, zones: list[tuple[Polygon, str]], tol: fl
     return out, merged
 
 
-def split_narrow(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
+def narrow_zones_to_diagonals(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
     """Rule 6, narrowest zone first: a four-cornered perimeter zone narrower than ``narrow_zone_m`` with a
     perimeter zone across each long side is cut along its shorter diagonal, and each half joins
     the zone on its side. Returns the zones and the diagonals."""
@@ -224,14 +225,16 @@ def split_narrow(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
         diagonals.append(diag)
 
 
-def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
-    """Rule 7: zones thinner than 2 m that share an edge become one zone. A merged zone that is not
-    convex takes the rest of its convex hull from the zones around it, if the hull stays inside the
-    footprint and every zone giving area stays one polygon and, if it was convex, convex. Groups
-    whose merged zone cannot be made convex stay as they are. With ``hull_keeps_width``, every zone giving area
-    must also stay at least the zone width wide (a core part the narrowest core; a zone already thinner, as wide
-    as it was); where one would not, the group merges without its hull and is not convex, for the convex
-    decomposition to cut. Returns the zones and the merged zones."""
+def merge_touching_thin_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
+    """Rule 7: zones thinner than ``min_zone_width_m`` that share an edge become one zone. A merged zone that is not
+    convex takes the rest of its convex hull from the zones around it, if the hull stays inside the footprint and
+    every zone giving area stays one polygon and, if it was convex, convex; otherwise the group stays as it is.
+
+    With ``hull_keeps_width``, a zone giving area must also stay at least the zone width wide (a core part the
+    narrowest core; a zone already thinner, as wide as it was). Where one would get thinner, the hull is still taken
+    if the rest of rules 7 and 8 then merge every zone it thins (looked ahead on a copy, without the width check);
+    otherwise the group merges without its hull and is not convex, for the convex decomposition to cut. Returns the
+    zones and the merged zones."""
     zones = list(zones)
 
     def touching_thin_groups() -> list[list[int]]:
@@ -283,7 +286,7 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
                          for j, (z, k) in enumerate(zones) if j not in members]
                 trial.append((hull, kind_of(hull, "zone", cfg.min_zone_width_m)))
                 plain = replace(cfg, hull_keeps_width=False)
-                after, _ = absorb_lone_tiny_zones(poly, merge_tiny_zones(poly, trial, plain)[0], plain)
+                after, _ = merge_lone_thin_zones(poly, merge_touching_thin_zones(poly, trial, plain)[0], plain)
                 still_thin = [z for z, k in after if k == "thin"]
                 if any(any(z.covers(r.representative_point()) for z in still_thin) for r in thinned):
                     changes = {}  # merge without the hull
@@ -293,11 +296,12 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
                 new = hull
         for j, rest in changes.items():
             zones[j] = (rest, kind_of(rest, zones[j][1], cfg.min_zone_width_m))
-        zones = [zk for i, zk in enumerate(zones) if i not in members] + [(new, kind_of(new, "zone", cfg.min_zone_width_m))]
+        zones = [zk for i, zk in enumerate(zones) if i not in members]
+        zones.append((new, kind_of(new, "zone", cfg.min_zone_width_m)))
         merged.append(new)
 
 
-def absorb_lone_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
+def merge_lone_thin_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
     """Rule 8: a zone thinner than 2 m with no thin neighbour merges into a neighbouring perimeter
     zone when the union is convex and at least 2 m wide (the widest such union). Where no neighbour
     gives that, one inner edge of the zone is first relinked: an end of the edge moves to a zone
@@ -382,11 +386,6 @@ def absorb_lone_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg:
         merged.append((u, relinked))
 
 
-#: rule 9 and rule 10 find the zone across an edge within this distance: edges that agree only to rounding, or
-#: where one carries a point the other does not, still count as shared
-ACROSS_TOL = 1e-6
-
-
 def taker_across(zones: list[tuple[Polygon, str]], i: int, edge: LineString) -> int | None:
     """Rule 9: the zone that takes a tip across edge: of the zones lying along it (within ``ACROSS_TOL``), the one
     along most of it; None when zones lie along less than half of it (the rest is outline)."""
@@ -399,12 +398,12 @@ def taker_across(zones: list[tuple[Polygon, str]], i: int, edge: LineString) -> 
 def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
     """Rule 9: a zone corner A sharper than ``sharp_corner_deg`` is cut off along BP, from the far end B of the
     shorter edge AB straight across to the longer edge AC (P, the foot of the perpendicular).
-    The zone across AB takes the tip ABP, or, when AB lies on the outline, the zone across AP; the cut zone keeps
-    the rest (A moves to P), and P is inserted into the zones whose edges it lies on, so the zones stay noded. The
-    zone across an edge is found within ``ACROSS_TOL``. A triangle whose rest would again have a corner sharper than
-    the limit (its third corner is over 90° minus the limit, or under the limit) goes whole to the zone taking the
-    tip: cut, it would leave a similar triangle, cut again and again down to a point. Skipped when no zone lies
-    across either edge or the result would be invalid. Returns the zones, the cuts and the zones handed over whole."""
+    The zone across AB takes the tip ABP, or, when AB lies on the outline, the zone across AP (:func:`taker_across`,
+    within ``ACROSS_TOL``); the cut zone keeps the rest (A moves to P), and P is inserted into the zones whose edges
+    it lies on, so the zones stay noded. A triangle goes whole to the zone taking the tip when the cut would leave a
+    new corner sharper than the limit at B (its rest a similar triangle, cut again and again down to a point) or when
+    the merged zone is convex. Skipped when no zone lies across either edge or the result would be invalid. Returns
+    the zones, the cuts and the zones handed over whole."""
     zones = list(zones)
     cuts: list[LineString] = []
     whole: list[Polygon] = []
@@ -490,7 +489,7 @@ def join_specks(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
 
 def sharp_corners(zones: list[tuple[Polygon, str]], deg: float = 20.0) -> int:
     """How many zone corners are sharper than deg."""
-    return sum(1 for z, _ in zones for angle, _ in convex_corners(z)[1] if angle < deg)
+    return sum(sharp_corner_count(z, deg) for z, _ in zones)
 
 
 def zone_counts(zones: list[tuple[Polygon, str]]) -> dict:

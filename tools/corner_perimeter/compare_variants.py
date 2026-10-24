@@ -41,7 +41,7 @@ VARIANTS = {
     "rule 4: narrowest core 1 m": {"narrow_core_m": 1.0},
     "rule 7: no width check": {"hull_keeps_width": False},
     "rule 9: skip cuts that make a convex zone non-convex": {"sharp_keep_convex": True},
-    "no rules 7 and 8 after rule 9": {"repeat_tiny_after_sharp": False},
+    "no rules 7 and 8 after rule 9": {"repeat_thin_after_sharp": False},
     "no rule 10 (specks stay)": {"join_specks": False},
     "rules 9, 7, 8 and 10 once, no repeat": {"repeat_until_stable": False},
     "no tidy step": {"snap_to_outline": False, "merge_close_again": False, "straighten_corners": False,

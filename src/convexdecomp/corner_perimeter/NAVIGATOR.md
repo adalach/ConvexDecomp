@@ -1,6 +1,6 @@
 # Hand-off: a Perimeter page in the BEM4AI workbench
 
-For the coordinator of the BEM4AI workbench (branch `workbench`). Agata asked (2026-10-21) for the corner-ray
+For the coordinator of the BEM4AI workbench (branch `workbench`). Agata asked for the corner-ray
 perimeter to appear in the navigator as its own page under Geometry, **after Windows and before Zones**, laid out
 like the other step pages (Geometry cleaning, Neighbourhood, Windows). This file says what the package gives the
 page and proposes how it fits; the decisions marked as hers are hers. Read `README.md` in this folder first.
@@ -41,8 +41,9 @@ Like `StepPage` for `S2`, `S3` and `S5`: the settings in sections beside a row o
 after at one scale, computed again when the sliders rest, then "Apply to all".
 
 **Settings.** `settings_table()` (or `python -m convexdecomp.corner_perimeter settings`) gives nine sections in
-order (Band and rays; Wing ends; Short walls; Bays; Rays that meet; Narrow core; Close points and narrow zones; Tiny
-zones and sharp corners; Tidy zone corners) with each field's title, help, unit, the values a run accepts (`ge`, `le`), a slider range that holds the
+order (Band and rays; Wing ends; Short walls; Bays; Rays that meet; Narrow core; Close points and narrow zones; Thin
+zones, sharp corners and specks; Tidy zone corners) with each field's title, help, unit, the values a run accepts
+(`ge`, `le`), a slider range that holds the
 default (`lo`, `hi`, `step`), the switch it `needs` and whether it is `advanced`: what `pages.py`'s `Section` and
 `Slider` take. Switches are booleans; every other field is a number. The README lists them all.
 
@@ -60,8 +61,8 @@ The colours the note uses, if the page wants the same look: perimeter zone `#9ec
 corners `#fd8d3c` and from reflex corners `#d94801`, merged rays `#1a9850`, corner-to-corner lines `#6a3d9a`,
 wing-end corners as a black cross.
 
-`upto` (one of `STAGES`, titles in `STAGE_TITLES`) gives the state after any rule, if the page wants to step
-through them.
+`upto` (one of `STAGES`, titles in `STAGE_TITLES`; `STEPS` adds each step's rule number and functions) gives the
+state after any step, if the page wants to step through them.
 
 **Telling examples.** Proposed strata for `S6`: `lost` (`perimeter_failed`), `vertices` (most corners), `holes`
 (courtyards), `thin` (lowest circularity: long narrow wings, where the wing ends act), `small` and `types`; and,
@@ -87,7 +88,7 @@ quiet machine (load average about 30: median 0.03 s, at most 2.7 s).
   `wing_end_parallel_deg = 180`; a 30 m square with a 10 m square courtyard in its middle gives 8 perimeter zones
   and 1 core part. In every case the zones tile the footprint and keep every corner of its outline.
 - The page in both profiles and at 1024, 1280 and 1500 px, in both themes, like the other step pages.
-- ConvexDecomp's own tests at the commit: `tests/test_corner_perimeter.py` (8 tests, four real footprints with
+- ConvexDecomp's own tests at the commit: `tests/test_corner_perimeter.py` and `test_corner_perimeter_tidy.py` (19 tests, nine real footprints with
   their expected counts).
 
 ## Touch points seen in `workbench` at `c54527a` (to be confirmed by the coordinator)

@@ -1,4 +1,4 @@
-"""Checks for the tidy step of the corner-ray perimeter (``convexdecomp.corner_perimeter.tidy``, since 2026-10-24).
+"""Checks for the tidy step of the corner-ray perimeter (``convexdecomp.corner_perimeter.tidy``).
 
 Runs under pytest next to ``test_corner_perimeter.py`` (it reuses its footprints and tiling check).
 """

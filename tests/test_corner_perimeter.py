@@ -2,9 +2,9 @@
 
 Runs under pytest, or directly with ``python tests/test_corner_perimeter.py``. The four real footprints in
 ``tests/data/corner_perimeter_footprints.json`` (WKB, local metres) are the test footprints of the method; five more
-footprints show the fixes of 2026-10-23. ``EXPECTED`` holds their counts with the defaults of 2026-10-24,
-``EXPECTED_OFF`` those with the switches of 2026-10-24 off (``OFF``: no short walls, bays or tidying), which are the
-counts the method was settled on before. Tests of one step switch the others off, so that each shows its own step.
+footprints show rules 7, 9 and 10 and the wing-end check at work. ``EXPECTED`` holds their counts with the defaults,
+``EXPECTED_OFF`` those with the short walls, bays and tidy step switched off (``OFF``). Tests of one step switch the
+others off, so that each shows its own step.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ BAY_CAP = [(13, 0), (13.2, -0.8), (14, -1.3), (15, -1.3), (15.8, -0.8), (16, 0)]
 BAY = Polygon([(0, 0), *BAY_CAP, (30, 0), (30, 12), (0, 12)])
 BUMP = Polygon([(0, 0), (12, 0), (12, -3), (18, -3), (18, 0), (30, 0), (30, 12), (0, 12)])
 
-#: the switches of 2026-10-24, off: the procedure as settled on 2026-10-23 (with rule 7's look-ahead and rule 9's
-#: narrower whole-triangle hand-over, which have no switch)
+#: the short walls, bays and tidy step switched off: the rays come from every corner but the wing ends, and the
+#: zones end with rule 10
 OFF = dict(short_wall_one_ray=False, bays=False, snap_to_outline=False, merge_close_again=False,
            straighten_corners=False, drop_collinear=False, split_pinched=False)
 
@@ -61,7 +61,7 @@ EXPECTED_OFF = {
     "Krakow_0013": (28, 2, 1, 6, 0, 8),
     "Bognor_Regis_0005": (38, 2, 0, 2, 0, 4),
     "Angers_0018": (4, 0, 0, 0, 0, 2),
-    # the footprints of the fixes of 2026-10-23
+    # footprints that show one rule or check at work
     "Liverpool_0042": (13, 1, 0, 1, 0, 0),    # rule 9 hands a 38.8 m² triangle over whole
     "Bucharest_0003": (27, 1, 0, 1, 0, 0),    # rule 7: the hull would leave its neighbour 1.52 m wide
     "Derby_0029": (3, 0, 0, 0, 0, 0),         # the wing-end check gives the narrow part's end its rays back
@@ -108,7 +108,7 @@ def test_wing_ends_on_a_narrow_leg():
     assert counts(corner_ray_perimeter(poly)) == (4, 0, 0, 0, 0, 2)
 
 
-def test_each_fix_on_its_footprint():
+def test_rules_and_checks_on_their_footprints():
     f = footprints()
 
     def run(sid, **changes):

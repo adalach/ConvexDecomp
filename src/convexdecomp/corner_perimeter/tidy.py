@@ -18,49 +18,15 @@ from shapely.geometry.polygon import orient
 
 from convexdecomp.core.scores import minimum_width
 
-from .geometry import EPS, clean_ring, convex_corners, cross, is_convex, kind_of, outline_corners, polygons, unit
+from .geometry import (EPS, SAME, angle_at, clean_ring, close_groups, corner_points, is_convex, kind_of, polygons,
+                       rings_of, sharp_corner_count, signed_area, unit)
 from .settings import CornerRayConfig
-
-#: two ring vertices closer than this are one point
-SAME = 1e-7
-
-
-def _rings(z: Polygon) -> list[np.ndarray]:
-    return [np.asarray(z.exterior.coords)[:-1], *(np.asarray(h.coords)[:-1] for h in z.interiors)]
-
-
-def _signed_area(c: np.ndarray) -> float:
-    x, y = c[:, 0], c[:, 1]
-    return 0.5 * float(x @ np.roll(y, -1) - np.roll(x, -1) @ y)
-
-
-def angle_at(a: np.ndarray, p: np.ndarray, b: np.ndarray) -> float:
-    """The interior angle at p, in degrees, of a counter-clockwise ring running a, p, b."""
-    u, v = a - p, b - p
-    return math.degrees(math.atan2(cross(v, u), float(v @ u))) % 360.0
-
-
-def _sharp(z: Polygon, deg: float) -> int:
-    return sum(1 for a, _ in convex_corners(z)[1] if a < deg)
 
 
 def _near_straight(z: Polygon, tol_deg: float) -> int:
     """How many corners of z's outer ring (straight vertices dropped) are within tol_deg of 180°."""
     c = clean_ring(np.asarray(orient(z, 1.0).exterior.coords)[:-1])
     return sum(1 for t in range(len(c)) if abs(angle_at(c[t - 1], c[t], c[(t + 1) % len(c)]) - 180.0) < tol_deg)
-
-
-def corner_points(poly: Polygon, zones: list[tuple[Polygon, str]]) -> tuple[np.ndarray, np.ndarray]:
-    """The distinct zone corners (outline corners first, then every corner of a zone's cleaned outer ring) and
-    whether each lies on the outline."""
-    pts = list(outline_corners(poly))
-    for z, _ in zones:
-        for p in clean_ring(np.asarray(orient(z, 1.0).exterior.coords)[:-1]):
-            if np.min(np.linalg.norm(np.asarray(pts) - p, axis=1)) > SAME:
-                pts.append(p)
-    pts = np.asarray(pts)
-    fixed = np.array([poly.boundary.distance(Point(p)) < EPS for p in pts])
-    return pts, fixed
 
 
 def try_move(poly: Polygon, zones: list[tuple[Polygon, str]], src: np.ndarray, dst: np.ndarray,
@@ -74,7 +40,7 @@ def try_move(poly: Polygon, zones: list[tuple[Polygon, str]], src: np.ndarray, d
     old, new = [], []
     for i, (z, k) in enumerate(zones):
         rings, hit = [], False
-        for c in _rings(z):
+        for c in rings_of(z):
             d = np.linalg.norm(c[:, None] - src[None], axis=2)
             j = np.argmin(d, axis=1)
             m = d[np.arange(len(c)), j] < SAME
@@ -89,14 +55,14 @@ def try_move(poly: Polygon, zones: list[tuple[Polygon, str]], src: np.ndarray, d
             continue
         old.append(z)
         ext = rings[0]
-        if len(ext) < 3 or abs(_signed_area(ext)) < 1e-9:
+        if len(ext) < 3 or abs(signed_area(ext)) < 1e-9:
             if k == "core" or (k != "thin" and z.area >= cfg.speck_m2):
                 return None  # only a thin zone or a speck may vanish
             after[i] = []
             continue
-        if np.sign(_signed_area(ext)) != np.sign(_signed_area(_rings(z)[0])):
+        if np.sign(signed_area(ext)) != np.sign(signed_area(rings_of(z)[0])):
             return None  # the ring turned over: the point crossed an edge
-        p = Polygon(ext, [h for h in rings[1:] if len(h) >= 3 and abs(_signed_area(h)) > 1e-9])
+        p = Polygon(ext, [h for h in rings[1:] if len(h) >= 3 and abs(signed_area(h)) > 1e-9])
         parts = [p]
         if not p.is_valid:
             if not cfg.split_pinched or p.interiors:
@@ -104,7 +70,7 @@ def try_move(poly: Polygon, zones: list[tuple[Polygon, str]], src: np.ndarray, d
             # the zone touches itself where the move brought two of its corners together: its two loops become
             # two zones (a ring that crosses itself is refused: its loops would not add up to its signed area)
             parts = [q for q in polygons(shapely.make_valid(p)) if q.area > 1e-9]
-            if len(parts) != 2 or abs(sum(q.area for q in parts) - abs(_signed_area(ext))) > 1e-9 * max(z.area, 1.0):
+            if len(parts) != 2 or abs(sum(q.area for q in parts) - abs(signed_area(ext))) > 1e-9 * max(z.area, 1.0):
                 return None
             if not all(is_convex(q) for q in parts):
                 return None  # a split is worth its extra zone only if both parts are convex
@@ -116,7 +82,8 @@ def try_move(poly: Polygon, zones: list[tuple[Polygon, str]], src: np.ndarray, d
                 return None
             if k != "core" and z.area >= cfg.speck_m2 and q.area < cfg.speck_m2:
                 return None
-        if sum(_sharp(q, cfg.sharp_corner_deg) for q in parts) > _sharp(z, cfg.sharp_corner_deg):
+        deg = cfg.sharp_corner_deg
+        if sum(sharp_corner_count(q, deg) for q in parts) > sharp_corner_count(z, deg):
             return None
         after[i] = parts
         new += parts
@@ -158,23 +125,12 @@ def snap_to_outline(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corner
 
 def merge_close_again(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRayConfig, reach: float):
     """Rule 5 once more, on the zones as they are now: inner zone corners closer than reach become one, in groups at
-    most ``corner_group_span_m`` across (grown from the closest pairs). A group moves to its mean, or, if that fails
-    a check, onto one of its own points (the one the others are closest to first). Returns the zones and the points
-    the groups became."""
+    most ``corner_group_span_m`` across (grown from the closest pairs, :func:`~.geometry.close_groups`). A group
+    moves to its mean, or, if that fails a check, onto one of its own points (the one the others are closest to
+    first). Returns the zones and the points the groups became."""
     pts, fixed = corner_points(poly, zones)
-    d = np.linalg.norm(pts[:, None] - pts[None], axis=2)
-    group = {i: [i] for i in range(len(pts))}
-    for i, j in sorted(zip(*np.nonzero(np.triu(d < reach, 1))), key=lambda ij: d[ij]):
-        gi, gj = group[i], group[j]
-        if gi is gj or fixed[i] or fixed[j]:
-            continue
-        both = gi + gj
-        if d[np.ix_(both, both)].max() > cfg.corner_group_span_m:
-            continue
-        for k in both:
-            group[k] = both
     merged = []
-    for members in {id(g): g for g in group.values() if len(g) > 1}.values():
+    for members in close_groups(pts, fixed, reach, cfg.corner_group_span_m):
         m = pts[members]
         targets = [m.mean(axis=0)] + [m[k] for k in np.argsort(np.linalg.norm(m[:, None] - m[None], axis=2).sum(1))]
         for t in targets:
@@ -258,7 +214,7 @@ def drop_collinear(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerR
     while True:
         seen: dict[tuple[float, float], list] = {}  # point -> [point, straight in every ring so far]
         for z, _ in zones:
-            for c in _rings(z):
+            for c in rings_of(z):
                 u = np.roll(c, -1, axis=0) - c  # edge from each vertex to the next
                 v = c - np.roll(c, 1, axis=0)   # edge into each vertex
                 lu, lv = np.linalg.norm(u, axis=1), np.linalg.norm(v, axis=1)

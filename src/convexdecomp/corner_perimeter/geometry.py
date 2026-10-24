@@ -13,15 +13,18 @@ from shapely.ops import substring
 
 from convexdecomp.core.scores import minimum_width
 
+#: lengths and distances below this are zero
 EPS = 1e-6
+#: two zone corners closer than this are one point
+SAME = 1e-7
 
 
 @dataclass
 class Line:
-    """A line that cuts the footprint: a corner ray, a merged ray or a corner-to-corner line."""
+    """A line that cuts the footprint: a corner ray, a merged ray (rule 1) or a corner-to-corner line (rule 2)."""
 
     geom: LineString
-    kind: str  # ray | merged (rule 2: corner to corner) | apex (rule 1: where two rays meet)
+    kind: str  # ray | merged_ray (rule 1) | corner_line (rule 2) | spine (a line of the narrow core, rule 4)
     stop: str  # what it ends on: ray | band | facade | corner
     reflex: bool = False
     again: bool = False  # a reflex corner's ray that reached nothing, cast again after rule 1 (rule 3)
@@ -176,3 +179,60 @@ def first_hit(start: np.ndarray, u: np.ndarray, obstacles, far: float) -> tuple[
 def heading_of(ln: Line) -> np.ndarray:
     a, b = np.asarray(ln.geom.coords[0]), np.asarray(ln.geom.coords[-1])
     return unit(b - a)
+
+
+def angle_at(a: np.ndarray, p: np.ndarray, b: np.ndarray) -> float:
+    """The interior angle at p, in degrees, of a counter-clockwise ring running a, p, b."""
+    u, v = a - p, b - p
+    return math.degrees(math.atan2(cross(v, u), float(v @ u))) % 360.0
+
+
+def angle_between(u: np.ndarray, v: np.ndarray) -> float:
+    """The unsigned angle between two directions, 0 to 180 degrees."""
+    return math.degrees(math.acos(np.clip(u @ v / (np.linalg.norm(u) * np.linalg.norm(v)), -1.0, 1.0)))
+
+
+def signed_area(c: np.ndarray) -> float:
+    """The signed area of the ring c (positive counter-clockwise)."""
+    x, y = c[:, 0], c[:, 1]
+    return 0.5 * float(x @ np.roll(y, -1) - np.roll(x, -1) @ y)
+
+
+def rings_of(z: Polygon) -> list[np.ndarray]:
+    """The vertices of z's outer ring and of its holes, without the closing vertex."""
+    return [np.asarray(z.exterior.coords)[:-1], *(np.asarray(h.coords)[:-1] for h in z.interiors)]
+
+
+def sharp_corner_count(z: Polygon, deg: float) -> int:
+    """How many corners of z's outer ring are sharper than deg."""
+    return sum(1 for angle, _ in convex_corners(z)[1] if angle < deg)
+
+
+def corner_points(poly: Polygon, zones: list[tuple[Polygon, str]]) -> tuple[np.ndarray, np.ndarray]:
+    """The distinct zone corners (outline corners first, then every corner of a zone's cleaned outer ring) and
+    whether each lies on the outline, where it may never move."""
+    pts = list(outline_corners(poly))
+    for z, _ in zones:
+        for p in clean_ring(np.asarray(orient(z, 1.0).exterior.coords)[:-1]):
+            if np.min(np.linalg.norm(np.asarray(pts) - p, axis=1)) > SAME:
+                pts.append(p)
+    pts = np.asarray(pts)
+    on_outline = np.array([poly.boundary.distance(Point(p)) < EPS for p in pts])
+    return pts, on_outline
+
+
+def close_groups(pts: np.ndarray, fixed: np.ndarray, reach_m: float, span_m: float) -> list[list[int]]:
+    """Groups of points (indices into pts) to become one: grown from the closest pairs closer than reach_m, each at
+    most span_m across, without the fixed points. Groups of one point are left out."""
+    d = np.linalg.norm(pts[:, None] - pts[None], axis=2)
+    group = {i: [i] for i in range(len(pts))}  # the members of the group each point is in
+    for i, j in sorted(zip(*np.nonzero(np.triu(d < reach_m, 1))), key=lambda ij: d[ij]):
+        gi, gj = group[i], group[j]
+        if gi is gj or fixed[i] or fixed[j]:
+            continue
+        both = gi + gj
+        if d[np.ix_(both, both)].max() > span_m:
+            continue
+        for k in both:
+            group[k] = both
+    return list({id(g): g for g in group.values() if len(g) > 1}.values())

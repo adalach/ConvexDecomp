@@ -4,6 +4,10 @@ the lines that ended on the core follow it.
 In each case two sides of the core lie close together and nearly parallel. The shorter side moves onto the longer
 one, so the line lies where the longer side was; only when the two are within ``similar_sides_ratio`` in length do
 both move half way. Core thinner than ``narrow_core_m`` never vanishes: it becomes a line.
+
+:func:`narrow_core_to_lines` runs the rule: legs (:func:`align_legs`), then notches (:func:`fill_notches`), then
+narrow parts (:func:`narrow_tips`); the lines follow the moved core (:func:`refit`), and the line of a narrow part
+runs on to the next line (:func:`run_on_spines`).
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from shapely.geometry.polygon import orient
 from convexdecomp.core.scores import minimum_width
 
 from .geometry import EPS, Line, clean_ring, cross, cut_at, first_hit, line_x, polygons, reach, unit
+from .lines import reattach
 from .settings import CornerRayConfig
 
 
@@ -361,3 +366,31 @@ def refit(lines: list[Line], poly: Polygon, core, band, moves) -> None:
             obstacles = [(poly.boundary, "facade"), (band, "band")] + [(o.geom, "ray") for o in lines if o is not ln]
             s, ln.stop = first_hit(b, unit(b - a), obstacles, far)
             ln.geom = LineString([a, b + s * unit(b - a)])
+
+
+def narrow_core_to_lines(offset_core, lines: list[Line], poly: Polygon, cfg: CornerRayConfig, active: bool = True):
+    """Rule 4 on the core as offset: legs, notches (with ``fill_notches``) and narrow parts become lines of the band;
+    the lines that ended on a moved core corner follow it, lines into the new core are cut back to it, lines left
+    ending on nothing run on, and the line of a narrow part or tip (not of a leg) runs on along it to the next line.
+    lines change in place. Returns the core, the lines the narrow core became (spines), and the records of the legs,
+    notches and narrow parts."""
+    has_core = not offset_core.is_empty
+    core, spines, moves, legs = align_legs(offset_core, cfg) if active and has_core else (offset_core, [], [], [])
+    core, notch_moves, notches = fill_notches(core, cfg) if cfg.fill_notches and active and not core.is_empty \
+        else (core, [], [])
+    core, tip_spines, tip_moves, tips = narrow_tips(core, cfg) if active and not core.is_empty else (core, [], [], [])
+    if tip_moves:  # leg lines that ended on a corner of a part that became a line follow it
+        spines = [LineString([next((new for old, new in tip_moves if np.linalg.norm(np.asarray(xy) - old) < 1e-6),
+                                   np.asarray(xy)) for xy in sp.coords]) for sp in spines]
+    narrow = [sp for sp, leg in zip(spines, legs) if leg.get("sliver")] + tip_spines  # lines of narrow core
+    spines = spines + tip_spines
+    moves = moves + notch_moves + tip_moves
+    band_line = shapely.union_all([core.boundary, *spines]) if not core.is_empty or spines else LineString()
+    refit(lines, poly, core, band_line, moves)
+    reattach(lines, poly, band_line)
+    if narrow:  # only the lines of narrow core parts and tips run on, not those of legs
+        legs_only = [sp for sp in spines if not any(sp is n for n in narrow)]
+        ran = run_on_spines(narrow, lines + [Line(sp, "spine", "band") for sp in legs_only], poly, core)
+        spines = legs_only + ran
+    return core, spines, legs, notches, tips
+

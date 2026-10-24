@@ -112,7 +112,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     draw_zones(axes[3], run(W), w)
     for i, ax in enumerate(axes):
         letter(ax, i)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "wing_end", "zone", "thin"], ncol=9)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged_ray", "wing_end", "zone", "thin"], ncol=9)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     save(fig, out, "perimeter_wing_ends", png)
 
@@ -133,7 +133,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     w = ((-4.5, 18.0), (-17.0, -6.5))
     fig, axes = plt.subplots(1, 2, figsize=(11, 3.4))
     pair(axes, run(K, "rays"), run(K, "merge_rays"), w, lines=True)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "wing_end"], ncol=7)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged_ray", "wing_end"], ncol=7)
     fig.tight_layout(rect=(0, 0.12, 1, 1))
     save(fig, out, "perimeter_merged_rays", png)
 
@@ -141,7 +141,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     w = window((-7.5, 15.0), 7.5)
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.9))
     pair(axes, run(V, "merge_rays"), run(V, "opposite"), w, lines=True)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "merged"], ncol=4)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged_ray", "corner_line"], ncol=4)
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     save(fig, out, "perimeter_opposite_rays", png)
 
@@ -149,7 +149,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     w = ((-47.5, -29.5), (3.5, 19.5))
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.9))
     pair(axes, run(B, "opposite"), run(B, "discard"), w, lines=True)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged", "apex", "wing_end"], ncol=4)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "corner_line", "merged_ray", "wing_end"], ncol=4)
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     save(fig, out, "perimeter_discarded_rays", png)
 
@@ -159,7 +159,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     for row, (p, w) in enumerate(examples):
         pair(axes[row], run(p, "discard"), run(p, "narrow_core"), w, letters=(2 * row, 2 * row + 1),
              lines=True, old_band=True)
-    legend(fig, ["outline", "band", "band_line", "band0", "ray", "ray_r", "apex", "wing_end"], ncol=8)
+    legend(fig, ["outline", "band", "band_line", "offset_band_line", "ray", "ray_r", "merged_ray", "wing_end"], ncol=8)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     save(fig, out, "perimeter_narrow_core_legs", png)
 
@@ -177,8 +177,8 @@ def main(out: Path, png: Path | None, source: Path) -> None:
         draw_zones(axes[row, 2], run(p), w)
     for i, ax in enumerate(axes.flat):
         letter(ax, i)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "wing_end", "zone", "thin", "nonconvex", "core"],
-           ncol=6)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged_ray", "wing_end", "zone", "thin", "nonconvex",
+                 "core"], ncol=6)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_narrow_core_parts", png)
 
@@ -212,43 +212,43 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_corner_groups", png)
 
-    # rule 7: touching tiny zones become one convex zone (Wroclaw's wing end, Riga's rounded bay, La Linea)
+    # rule 7: touching thin zones become one convex zone (Wroclaw's wing end, Riga's rounded bay, La Linea)
     examples = [(Wr, window((-2.0, -10.5), 6.0, 4.3)), (Ri, window((1.3, -13.65), 5.7, 4.0)),
                 (L, window((6.6, 7.25), 4.5, 3.2))]
     fig, axes = plt.subplots(3, 2, figsize=(9, 9.6))
     for row, (p, w) in enumerate(examples):
-        pair(axes[row], run(p, "corner_groups"), run(p, "tiny_touching"), w, letters=(2 * row, 2 * row + 1))
+        pair(axes[row], run(p, "corner_groups"), run(p, "thin_touching"), w, letters=(2 * row, 2 * row + 1))
     legend(fig, ZONE_KEYS, ncol=5)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
-    save(fig, out, "perimeter_tiny_touching", png)
+    save(fig, out, "perimeter_thin_touching", png)
 
     # rule 7's width check: Bucharest's rounded bay, before rule 7, with the hull, merged without it
     Bu = g.loc["Bucharest_0003", "geometry"]
     w = window((4.6, 23.0), 6.5, 4.6)
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.9))
     draw_zones(axes[0], run(Bu, "corner_groups"), w)
-    draw_zones(axes[1], run(Bu, "tiny_touching", replace(RULES, hull_keeps_width=False)), w)
-    draw_zones(axes[2], run(Bu, "tiny_touching"), w)
+    draw_zones(axes[1], run(Bu, "thin_touching", replace(RULES, hull_keeps_width=False)), w)
+    draw_zones(axes[2], run(Bu, "thin_touching"), w)
     for i, ax in enumerate(axes):
         letter(ax, i)
     legend(fig, ZONE_KEYS, ncol=5)
     fig.tight_layout(rect=(0, 0.1, 1, 1))
-    save(fig, out, "perimeter_tiny_touching_width", png)
+    save(fig, out, "perimeter_thin_touching_width", png)
 
-    # rule 8: lone tiny zones merge into a neighbour, after a relink if needed (Almere, Bognor's lower wing)
+    # rule 8: lone thin zones merge into a neighbour, after a relink if needed (Almere, Bognor's lower wing)
     examples = [(M, window((30.7, -2.9), 4.2, 3.4)), (B, window((-6.5, -12.2), 4.5, 3.4))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 6.8))
     for row, (p, w) in enumerate(examples):
-        pair(axes[row], run(p, "tiny_touching"), run(p, "tiny_lone"), w, letters=(2 * row, 2 * row + 1))
+        pair(axes[row], run(p, "thin_touching"), run(p, "thin_lone"), w, letters=(2 * row, 2 * row + 1))
     legend(fig, ZONE_KEYS, ncol=5)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
-    save(fig, out, "perimeter_tiny_lone", png)
+    save(fig, out, "perimeter_thin_lone", png)
 
     # rule 9: sharp corners are cut off (Krakow's bottom-left end, Caen)
     examples = [(K, window((-23.0, -16.0), 7.0, 5.0)), (C, window((3.0, 15.0), 5.0, 3.6))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 7.0))
     for row, (p, w) in enumerate(examples):
-        pair(axes[row], run(p, "tiny_lone"), run(p, "sharp"), w, letters=(2 * row, 2 * row + 1), cuts=True)
+        pair(axes[row], run(p, "thin_lone"), run(p, "sharp"), w, letters=(2 * row, 2 * row + 1), cuts=True)
     legend(fig, ZONE_KEYS + ["cut"], ncol=6)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_sharp_corners", png)
@@ -260,7 +260,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     for row, (sid, w) in enumerate(examples):
         p = g.loc[sid, "geometry"]
         after = run(p, "sharp")
-        pair(axes[row], run(p, "tiny_lone"), after, w, letters=(2 * row, 2 * row + 1), cuts=True)
+        pair(axes[row], run(p, "thin_lone"), after, w, letters=(2 * row, 2 * row + 1), cuts=True)
         for z in after.sharp_whole:
             plot_line(z.exterior, ax=axes[row, 1], add_points=False, color=PINK, linewidth=1.8, linestyle=(0, (2, 1)))
     legend(fig, ZONE_KEYS + ["cut"], ncol=6)
@@ -294,7 +294,8 @@ def main(out: Path, png: Path | None, source: Path) -> None:
             marks(axes[row, col], [sw["ray"] for sw in lines_r.short_walls], "o")
         for col in range(4):
             letter(axes[row, col], 4 * row + col)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "zone", "thin", "nonconvex", "core"], ncol=10)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged_ray", "zone", "thin", "nonconvex", "core"],
+           ncol=10)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_short_walls", png)
 
@@ -318,7 +319,8 @@ def main(out: Path, png: Path | None, source: Path) -> None:
             marks(axes[row, col], r.bay_corners, "o", PINK)
         for col in range(4):
             letter(axes[row, col], 4 * row + col)
-    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "zone", "thin", "nonconvex", "core"], ncol=10)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "merged_ray", "zone", "thin", "nonconvex", "core"],
+           ncol=10)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_bays", png)
 

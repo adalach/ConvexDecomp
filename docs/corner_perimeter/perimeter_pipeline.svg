@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="250.0mm" height="189.1mm" viewBox="0 0 250.0 189.08" font-family="'TUM Neue Helvetica', 'Helvetica Neue', HelveticaNeue, Helvetica, Arial, sans-serif">
+<defs><marker id="chev" markerUnits="userSpaceOnUse" markerWidth="2.8" markerHeight="2.8" viewBox="0 0 10 10" refX="9.2" refY="5" orient="auto"><path d="M1.2,1 L9.2,5 L1.2,9" fill="none" stroke="#0065BD" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></marker></defs>
+<rect width="250.0" height="189.08" fill="#ffffff"/>
+<rect x="47.17" y="9.00" width="193.83" height="33.89" rx="5" fill="none" stroke="#98C6EA" stroke-width="0.4"/>
+<rect x="9.00" y="53.89" width="232.00" height="33.89" rx="5" fill="none" stroke="#98C6EA" stroke-width="0.4"/>
+<rect x="9.00" y="98.79" width="232.00" height="33.89" rx="5" fill="none" stroke="#98C6EA" stroke-width="0.4"/>
+<rect x="9.00" y="143.68" width="232.00" height="39.39" rx="5" fill="none" stroke="#98C6EA" stroke-width="0.4"/>
+<path d="M51.17,18.10 H84.33 V36.49 A2.4,2.4 0 0 1 81.93,38.89 H53.57 A2.4,2.4 0 0 1 51.17,36.49 Z" fill="#98C6EA"/>
+<rect x="51.17" y="14.00" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="67.75" y="18.46" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">CORNERS</text>
+<text x="67.75" y="24.50" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Outline and</text>
+<text x="67.75" y="28.40" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">courtyard corners</text>
+<text x="67.75" y="32.30" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">that turn</text>
+<path d="M89.33,18.10 H122.50 V36.49 A2.4,2.4 0 0 1 120.10,38.89 H91.73 A2.4,2.4 0 0 1 89.33,36.49 Z" fill="#98C6EA"/>
+<rect x="89.33" y="14.00" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="105.92" y="18.46" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RAY SOURCES</text>
+<text x="105.92" y="24.50" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Wing ends and bays</text>
+<text x="105.92" y="28.40" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">cast no rays; a short</text>
+<text x="105.92" y="32.30" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">wall casts one</text>
+<path d="M84.33,17.25 L89.33,17.25" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="84.33" cy="17.25" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M127.50,18.10 H160.67 V36.49 A2.4,2.4 0 0 1 158.27,38.89 H129.90 A2.4,2.4 0 0 1 127.50,36.49 Z" fill="#98C6EA"/>
+<rect x="127.50" y="14.00" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="144.08" y="18.46" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">BAND</text>
+<text x="144.08" y="24.50" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">The outline offset</text>
+<text x="144.08" y="28.40" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">4.5 m inwards</text>
+<path d="M122.50,17.25 L127.50,17.25" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="122.50" cy="17.25" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M165.67,18.10 H198.83 V36.49 A2.4,2.4 0 0 1 196.43,38.89 H168.07 A2.4,2.4 0 0 1 165.67,36.49 Z" fill="#98C6EA"/>
+<rect x="165.67" y="14.00" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="182.25" y="18.46" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">CORNER RAYS</text>
+<text x="182.25" y="24.50" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Bisectors from the</text>
+<text x="182.25" y="28.40" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">corners, stopped by</text>
+<text x="182.25" y="32.30" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">the first ray, cut at</text>
+<text x="182.25" y="36.19" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">the band line</text>
+<path d="M160.67,17.25 L165.67,17.25" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="160.67" cy="17.25" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M13.00,62.99 H46.17 V81.39 A2.4,2.4 0 0 1 43.77,83.79 H15.40 A2.4,2.4 0 0 1 13.00,81.39 Z" fill="#98C6EA"/>
+<rect x="13.00" y="58.89" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="29.58" y="63.35" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 2</text>
+<text x="29.58" y="69.39" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Close opposite rays</text>
+<text x="29.58" y="73.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">become one</text>
+<text x="29.58" y="77.19" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">corner-to-corner line</text>
+<path d="M51.17,62.99 H84.33 V81.39 A2.4,2.4 0 0 1 81.93,83.79 H53.57 A2.4,2.4 0 0 1 51.17,81.39 Z" fill="#98C6EA"/>
+<rect x="51.17" y="58.89" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="67.75" y="63.35" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 3</text>
+<text x="67.75" y="69.39" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Rays that reach</text>
+<text x="67.75" y="73.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">nothing are</text>
+<text x="67.75" y="77.19" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">discarded</text>
+<path d="M46.17,62.14 L51.17,62.14" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="46.17" cy="62.14" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M89.33,62.99 H122.50 V81.39 A2.4,2.4 0 0 1 120.10,83.79 H91.73 A2.4,2.4 0 0 1 89.33,81.39 Z" fill="#98C6EA"/>
+<rect x="89.33" y="58.89" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="105.92" y="63.35" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 1</text>
+<text x="105.92" y="69.39" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Rays that meet</text>
+<text x="105.92" y="73.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">merge</text>
+<path d="M84.33,62.14 L89.33,62.14" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="84.33" cy="62.14" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M127.50,62.99 H160.67 V81.39 A2.4,2.4 0 0 1 158.27,83.79 H129.90 A2.4,2.4 0 0 1 127.50,81.39 Z" fill="#98C6EA"/>
+<rect x="127.50" y="58.89" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="144.08" y="63.35" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 3</text>
+<text x="144.08" y="69.39" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Those from reflex</text>
+<text x="144.08" y="73.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">corners are cast</text>
+<text x="144.08" y="77.19" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">again</text>
+<path d="M122.50,62.14 L127.50,62.14" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="122.50" cy="62.14" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M165.67,62.99 H198.83 V81.39 A2.4,2.4 0 0 1 196.43,83.79 H168.07 A2.4,2.4 0 0 1 165.67,81.39 Z" fill="#98C6EA"/>
+<rect x="165.67" y="58.89" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="182.25" y="63.35" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 4</text>
+<text x="182.25" y="69.39" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Core narrower than</text>
+<text x="182.25" y="73.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">1.2 m becomes lines</text>
+<path d="M160.67,62.14 L165.67,62.14" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="160.67" cy="62.14" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M203.83,62.99 H237.00 V81.39 A2.4,2.4 0 0 1 234.60,83.79 H206.23 A2.4,2.4 0 0 1 203.83,81.39 Z" fill="#98C6EA"/>
+<rect x="203.83" y="58.89" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="220.42" y="63.35" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">ZONES</text>
+<text x="220.42" y="69.39" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Lines and band line</text>
+<text x="220.42" y="73.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">split the footprint into</text>
+<text x="220.42" y="77.19" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">zones and core</text>
+<path d="M198.83,62.14 L203.83,62.14" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="198.83" cy="62.14" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M13.00,107.89 H46.17 V126.28 A2.4,2.4 0 0 1 43.77,128.68 H15.40 A2.4,2.4 0 0 1 13.00,126.28 Z" fill="#98C6EA"/>
+<rect x="13.00" y="103.79" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="29.58" y="108.24" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 5</text>
+<text x="29.58" y="114.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Points closer than</text>
+<text x="29.58" y="118.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">0.5 m become one</text>
+<path d="M51.17,107.89 H84.33 V126.28 A2.4,2.4 0 0 1 81.93,128.68 H53.57 A2.4,2.4 0 0 1 51.17,126.28 Z" fill="#98C6EA"/>
+<rect x="51.17" y="103.79" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="67.75" y="108.24" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 6</text>
+<text x="67.75" y="114.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Zones narrower than</text>
+<text x="67.75" y="118.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">2 m give way to a</text>
+<text x="67.75" y="122.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">diagonal</text>
+<path d="M46.17,107.04 L51.17,107.04" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="46.17" cy="107.04" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M89.33,107.89 H122.50 V126.28 A2.4,2.4 0 0 1 120.10,128.68 H91.73 A2.4,2.4 0 0 1 89.33,126.28 Z" fill="#98C6EA"/>
+<rect x="89.33" y="103.79" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="105.92" y="108.24" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 5 AGAIN</text>
+<text x="105.92" y="114.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Points closer than</text>
+<text x="105.92" y="118.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">1.2 m, in groups up</text>
+<text x="105.92" y="122.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">to 2 m across</text>
+<path d="M84.33,107.04 L89.33,107.04" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="84.33" cy="107.04" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M127.50,107.89 H160.67 V126.28 A2.4,2.4 0 0 1 158.27,128.68 H129.90 A2.4,2.4 0 0 1 127.50,126.28 Z" fill="#98C6EA"/>
+<rect x="127.50" y="103.79" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="144.08" y="108.24" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 7</text>
+<text x="144.08" y="114.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Touching thin zones</text>
+<text x="144.08" y="118.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">merge</text>
+<path d="M122.50,107.04 L127.50,107.04" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="122.50" cy="107.04" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M165.67,107.89 H198.83 V126.28 A2.4,2.4 0 0 1 196.43,128.68 H168.07 A2.4,2.4 0 0 1 165.67,126.28 Z" fill="#98C6EA"/>
+<rect x="165.67" y="103.79" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="182.25" y="108.24" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 8</text>
+<text x="182.25" y="114.29" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">A lone thin zone</text>
+<text x="182.25" y="118.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">merges into a</text>
+<text x="182.25" y="122.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">neighbour</text>
+<path d="M160.67,107.04 L165.67,107.04" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="160.67" cy="107.04" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M13.00,152.78 H46.17 V171.18 A2.4,2.4 0 0 1 43.77,173.58 H15.40 A2.4,2.4 0 0 1 13.00,171.18 Z" fill="#98C6EA"/>
+<rect x="13.00" y="148.68" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="29.58" y="153.14" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 9</text>
+<text x="29.58" y="159.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Corners under 20°</text>
+<text x="29.58" y="163.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">are cut off</text>
+<path d="M51.17,152.78 H84.33 V171.18 A2.4,2.4 0 0 1 81.93,173.58 H53.57 A2.4,2.4 0 0 1 51.17,171.18 Z" fill="#98C6EA"/>
+<rect x="51.17" y="148.68" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="67.75" y="153.14" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULES 7, 8</text>
+<text x="67.75" y="159.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Once more, for the</text>
+<text x="67.75" y="163.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">zones rule 9 thinned</text>
+<path d="M46.17,151.93 L51.17,151.93" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="46.17" cy="151.93" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M89.33,152.78 H122.50 V171.18 A2.4,2.4 0 0 1 120.10,173.58 H91.73 A2.4,2.4 0 0 1 89.33,171.18 Z" fill="#98C6EA"/>
+<rect x="89.33" y="148.68" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="105.92" y="153.14" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">RULE 10</text>
+<text x="105.92" y="159.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Specks under 0.5 m²</text>
+<text x="105.92" y="163.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">join a neighbour</text>
+<path d="M84.33,151.93 L89.33,151.93" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="84.33" cy="151.93" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M127.50,152.78 H160.67 V171.18 A2.4,2.4 0 0 1 158.27,173.58 H129.90 A2.4,2.4 0 0 1 127.50,171.18 Z" fill="#98C6EA"/>
+<rect x="127.50" y="148.68" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="144.08" y="153.14" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">TIDY</text>
+<text x="144.08" y="159.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Snap, merge,</text>
+<text x="144.08" y="163.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">straighten and split</text>
+<text x="144.08" y="166.98" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">zone corners</text>
+<path d="M122.50,151.93 L127.50,151.93" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="122.50" cy="151.93" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M165.67,152.78 H198.83 V171.18 A2.4,2.4 0 0 1 196.43,173.58 H168.07 A2.4,2.4 0 0 1 165.67,171.18 Z" fill="#98C6EA"/>
+<rect x="165.67" y="148.68" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#0065BD" stroke-width="0.45"/>
+<text x="182.25" y="153.14" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">CHECKS</text>
+<text x="182.25" y="159.18" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">Wing ends and bays</text>
+<text x="182.25" y="163.08" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">tried again with their</text>
+<text x="182.25" y="166.98" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">rays</text>
+<path d="M160.67,151.93 L165.67,151.93" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="160.67" cy="151.93" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M13.00,18.10 H46.17 V36.49 A2.4,2.4 0 0 1 43.77,38.89 H15.40 A2.4,2.4 0 0 1 13.00,36.49 Z" fill="#98C6EA"/>
+<rect x="13.00" y="14.00" width="33.17" height="6.5" rx="2.4" fill="#ffffff" stroke="#9C9E9F" stroke-width="0.45"/>
+<text x="29.58" y="18.46" font-size="3.352" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">FOOTPRINT</text>
+<text x="29.58" y="24.50" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">A valid polygon in</text>
+<text x="29.58" y="28.40" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">metres, courtyards</text>
+<text x="29.58" y="32.30" font-size="2.999" text-anchor="middle" font-weight="normal" font-style="normal" fill="#000000">allowed</text>
+<path d="M46.17,17.25 L51.17,17.25" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="46.17" cy="17.25" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<rect x="203.83" y="148.68" width="33.17" height="24.89" rx="2.4" fill="#0065BD"/>
+<text x="220.42" y="158.15" font-size="3.352" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">PERIMETER</text>
+<text x="220.42" y="162.33" font-size="3.352" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">ZONES AND</text>
+<text x="220.42" y="166.52" font-size="3.352" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">CORE</text>
+<path d="M198.83,151.93 L203.83,151.93" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="198.83" cy="151.93" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M182.25,38.89 L182.25,48.39 L4.50,48.39 L4.50,62.14 L13.00,62.14" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="182.25" cy="38.89" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M220.42,83.79 L220.42,93.29 L4.50,93.29 L4.50,107.04 L13.00,107.04" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="220.42" cy="83.79" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M182.25,128.68 L182.25,138.18 L4.50,138.18 L4.50,151.93 L13.00,151.93" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="182.25" cy="128.68" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<path d="M144.08,173.58 L144.08,177.58 L29.58,177.58 L29.58,173.58" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" marker-end="url(#chev)"/>
+<circle cx="144.08" cy="173.58" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<text x="86.83" y="181.10" font-size="2.822" text-anchor="middle" font-weight="normal" font-style="italic" fill="#0065BD" stroke="#ffffff" stroke-width="1.2" paint-order="stroke" stroke-linejoin="round">until nothing changes, at most 8 rounds</text>
+<path d="M182.25,173.58 L182.25,177.58 L245.50,177.58 L245.50,4.50 L105.92,4.50 L105.92,14.00" fill="none" stroke="#0065BD" stroke-width="0.35" stroke-linejoin="round" stroke-dasharray="1.5 1.1" marker-end="url(#chev)"/>
+<circle cx="182.25" cy="173.58" r="0.8" fill="#ffffff" stroke="#0065BD" stroke-width="0.3"/>
+<text x="175.71" y="3.30" font-size="2.822" text-anchor="middle" font-weight="normal" font-style="italic" fill="#0065BD" stroke="#ffffff" stroke-width="1.2" paint-order="stroke" stroke-linejoin="round">retry a wing end or bay with its rays; keep the try if it leaves fewer thin, non-convex or sharp zones and specks</text>
+<rect x="51.17" y="6.70" width="13.57" height="4.6" rx="2.3" fill="#0065BD"/>
+<text x="57.95" y="10.02" font-size="2.822" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">RAYS</text>
+<rect x="13.00" y="51.59" width="33.77" height="4.6" rx="2.3" fill="#0065BD"/>
+<text x="29.89" y="54.91" font-size="2.822" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">LINES · RULES 1–4</text>
+<rect x="13.00" y="96.49" width="35.37" height="4.6" rx="2.3" fill="#0065BD"/>
+<text x="30.69" y="99.80" font-size="2.822" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">ZONES · RULES 5–8</text>
+<rect x="13.00" y="141.38" width="28.84" height="4.6" rx="2.3" fill="#0065BD"/>
+<text x="27.42" y="144.70" font-size="2.822" text-anchor="middle" font-weight="bold" font-style="normal" fill="#ffffff" letter-spacing="0.12">FINAL ROUNDS</text>
+</svg>

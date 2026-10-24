@@ -20,8 +20,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from convexdecomp.corner_perimeter import corner_ray_perimeter  # noqa: E402
 
-KEYS = ["band", "band_line", "band0", "ray", "ray_r", "apex", "merged", "wing_end", "diagonal", *ZONE_KEYS[1:],
-        "group", "cut"]
+KEYS = ["band", "band_line", "offset_band_line", "ray", "ray_r", "merged_ray", "corner_line", "wing_end", "diagonal",
+        *ZONE_KEYS[1:], "group", "cut"]
 
 
 def lines_title(sid: str, r) -> str:
@@ -31,8 +31,8 @@ def lines_title(sid: str, r) -> str:
             f"rule 3: {c['rays_discarded']} rays discarded,\n"
             f"rule 4: {c['legs']} legs, {c['notches']} notches, {c['narrow_parts']} narrow parts to lines, "
             f"rule 5: {c['points_merged']} + {c['corner_groups']} groups of close points,\n"
-            f"rule 6: {c['diagonals']} diagonals, rule 7: {c['tiny_merged']} groups of tiny zones merged, "
-            f"rule 8: {c['lone_merged']} lone tiny zones merged,\nrule 9: {c['sharp_cuts']} sharp corners cut")
+            f"rule 6: {c['diagonals']} diagonals, rule 7: {c['thin_merged']} groups of thin zones merged, "
+            f"rule 8: {c['lone_merged']} lone thin zones merged,\nrule 9: {c['sharp_cuts']} sharp corners cut")
 
 
 def panels(axes, sid: str, r) -> None:
