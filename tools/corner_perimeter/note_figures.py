@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """The figures of the Obsidian note "Convex Decomposition Perimeter": one per step, before and after, zoomed on
-examples of the footprint sample (the three test footprints, Angers_0018, Derby_0029, Aldershot_0005, Exeter_0008,
-Alicante_0030, Wroclaw_0046, Riga_0034, La_Linea_de_la_Concepcion_0016, Bucharest_0003, Almere_0021, Caen_0016,
-Liverpool_0042, Strasbourg_0020, Athens_0005, Brussels_0025 and Bari_0003)::
+examples of the footprint sample (the three test footprints, Angers_0018, Derby_0029, Aldershot_0005, Dordrecht_0010,
+Enschede_0004, Exeter_0008, Alicante_0030, Wroclaw_0046, Riga_0034, La_Linea_de_la_Concepcion_0016, Bucharest_0003,
+Almere_0021, Caen_0016, Liverpool_0042, Strasbourg_0020, Brussels_0025, Bari_0003, Besancon_0001, Liege_0045 and
+Bonn_0008). The figures of the wing ends and rules 1 to 10 are drawn with the short walls, bays and tidy step off
+(``RULES``), so that each shows its own step; those of the three steps show each on its own, and the last figure the
+result with every default::
 
     python tools/corner_perimeter/note_figures.py --out /path/to/attachments [--png <preview dir>]
 
@@ -13,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -22,6 +26,7 @@ from drawing import (BAND_FILL, BAND_LINE, KINDS, PINK, POINT_STYLE, RAY_CONVEX,
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+import shapely  # noqa: E402
 from shapely.plotting import plot_line, plot_polygon  # noqa: E402
 
 from convexdecomp.corner_perimeter import CornerRayConfig, corner_ray_perimeter  # noqa: E402
@@ -29,8 +34,32 @@ from convexdecomp.corner_perimeter import CornerRayConfig, corner_ray_perimeter 
 plt.rcParams.update({"svg.fonttype": "none", "font.size": 9})
 
 
+#: the defaults with the short walls, bays and tidy step off: the procedure each rule's figure shows
+RULES = CornerRayConfig(short_wall_one_ray=False, bays=False, snap_to_outline=False, merge_close_again=False,
+                        straighten_corners=False, drop_collinear=False, split_pinched=False)
+TIDY_ON = dict(snap_to_outline=True, merge_close_again=True, straighten_corners=True, drop_collinear=True,
+               split_pinched=True)
+VIOLET = "#6a3d9a"
+
+
 def run(poly, upto=None, cfg=None):
-    return corner_ray_perimeter(poly, cfg, upto=upto)
+    return corner_ray_perimeter(poly, cfg or RULES, upto=upto)
+
+
+def changed_window(a, b, margin: float = 2.0):
+    """The window around what differs between the zones of two results."""
+    la, lb = (shapely.union_all([z.boundary for z, _ in r.zones]) for r in (a, b))
+    x0, y0, x1, y1 = la.symmetric_difference(lb).buffer(margin).bounds
+    return (x0, x1), (y0, y1)
+
+
+def marks(ax, points, marker: str, color: str = VIOLET) -> None:
+    xy = np.array(points, dtype=float).reshape(-1, 2)
+    if len(xy):
+        style = dict(marker=marker, s=55, zorder=9)
+        style.update(dict(facecolor="none", edgecolor=color, linewidths=1.6) if marker == "o"
+                     else dict(color=color, linewidths=1.6))
+        ax.scatter(xy[:, 0], xy[:, 1], **style)
 
 
 def pair(axes, before, after, win, letters=(0, 1), lines=False, old_band=False, groups=None, cuts=False):
@@ -75,7 +104,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
 
     # wing ends: Angers' leg, 2.8 m wide, with and without rays from the two corners of its end wall
     w = whole(W)
-    every = CornerRayConfig(wing_end_max_m=0.0)
+    every = replace(RULES, wing_end_max_m=0.0)
     fig, axes = plt.subplots(1, 4, figsize=(16, 4.6))
     draw_lines(axes[0], run(W, "discard", every), w)
     draw_zones(axes[1], run(W, cfg=every), w)
@@ -88,7 +117,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     save(fig, out, "perimeter_wing_ends", png)
 
     # the wing-end check: stepped blocks whose narrow end keeps its rays (Derby, Aldershot)
-    no_check = CornerRayConfig(wing_end_check=False)
+    no_check = replace(RULES, wing_end_check=False)
     fig, axes = plt.subplots(2, 2, figsize=(10, 5.6))
     for row, p in enumerate(g.loc[s, "geometry"] for s in ("Derby_0029", "Aldershot_0005")):
         before, after = run(p, cfg=no_check), run(p)
@@ -136,7 +165,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
 
     # rule 4, narrow parts: Exeter's left wing, Alicante's core, Valdemoro's lower right wing; "before" leaves
     # narrow parts as they are (no whole parts, tips or passages to lines)
-    without = CornerRayConfig(collapse_narrow_parts=False, narrow_core_m=0.0)
+    without = replace(RULES, collapse_narrow_parts=False, narrow_core_m=0.0)
     fig, axes = plt.subplots(3, 3, figsize=(15, 13.5))
     for row, p in enumerate((E, A, V)):
         w = whole(p) if p is not V else ((5.0, 27.0), (-31.0, -11.0))
@@ -198,7 +227,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     w = window((4.6, 23.0), 6.5, 4.6)
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.9))
     draw_zones(axes[0], run(Bu, "corner_groups"), w)
-    draw_zones(axes[1], run(Bu, "tiny_touching", CornerRayConfig(hull_keeps_width=False)), w)
+    draw_zones(axes[1], run(Bu, "tiny_touching", replace(RULES, hull_keeps_width=False)), w)
     draw_zones(axes[2], run(Bu, "tiny_touching"), w)
     for i, ax in enumerate(axes):
         letter(ax, i)
@@ -250,10 +279,70 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     save(fig, out, "perimeter_specks", png)
 
-    # the result on all three test footprints
+    # short walls: one ray per short step (Dordrecht) and per chamfer (Brussels); rays and zones, two rays against one
+    one_ray = replace(RULES, short_wall_one_ray=True)
+    examples = [("Dordrecht_0010", None), ("Brussels_0025", window((8.4, 7.4), 4.2, 3.2))]
+    fig, axes = plt.subplots(2, 4, figsize=(17, 8.2))
+    for row, (sid, w) in enumerate(examples):
+        p = g.loc[sid, "geometry"]
+        w = w or whole(p)
+        for col, cfg in ((0, RULES), (2, one_ray)):
+            lines_r = run(p, "discard", cfg)
+            draw_lines(axes[row, col], lines_r, w)
+            draw_zones(axes[row, col + 1], run(p, cfg=cfg), w)
+            marks(axes[row, col], [q for sw in lines_r.short_walls for q in sw["dropped"]], "x")
+            marks(axes[row, col], [sw["ray"] for sw in lines_r.short_walls], "o")
+        for col in range(4):
+            letter(axes[row, col], 4 * row + col)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "zone", "thin", "nonconvex", "core"], ncol=10)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    save(fig, out, "perimeter_short_walls", png)
+
+    # bays: Enschede's polygonal bay and Bucharest's round bay; rays and zones, without and with the bay rule
+    with_bays = replace(RULES, bays=True)
+    examples = ["Enschede_0004", "Bucharest_0003"]
+    fig, axes = plt.subplots(2, 4, figsize=(17, 8.2))
+    for row, sid in enumerate(examples):
+        p = g.loc[sid, "geometry"]
+        after = run(p, cfg=with_bays)
+        bay = np.array(after.bay_corners).reshape(-1, 2)
+        if sid == "Bucharest_0003":  # the bay in the north
+            bay = bay[bay[:, 1] > 15.0]
+        (x0, y0), (x1, y1) = bay.min(axis=0), bay.max(axis=0)
+        cx, cy, half = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, y1 - y0) / 2 + 4.0
+        w = window((cx, cy), half, half * 0.8)
+        for col, cfg in ((0, RULES), (2, with_bays)):
+            draw_lines(axes[row, col], run(p, "discard", cfg), w)
+            r = run(p, cfg=cfg)
+            draw_zones(axes[row, col + 1], r, w)
+            marks(axes[row, col], r.bay_corners, "o", PINK)
+        for col in range(4):
+            letter(axes[row, col], 4 * row + col)
+    legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "zone", "thin", "nonconvex", "core"], ncol=10)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    save(fig, out, "perimeter_bays", png)
+
+    # tidy step: a corner straightened (Bonn), close points merged once more (Liege), a point rule 9 made merged
+    # with its neighbour (Besancon)
+    tidy = replace(RULES, **TIDY_ON)
+    fig, axes = plt.subplots(3, 2, figsize=(10, 12.0))
+    for row, sid in enumerate(("Bonn_0008", "Liege_0045", "Besancon_0001")):
+        p = g.loc[sid, "geometry"]
+        before, after = run(p), run(p, cfg=tidy)
+        w = changed_window(before, after, 2.5)
+        pair(axes[row], before, after, w, letters=(2 * row, 2 * row + 1))
+        corner_dots(axes[row, 0], before)
+        corner_dots(axes[row, 1], after)
+        for key, marker in (("snapped", "s"), ("merged_again", "o"), ("straightened", "D")):
+            marks(axes[row, 1], after.tidied.get(key, []), marker, PINK)
+    legend(fig, ZONE_KEYS, ncol=5)
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    save(fig, out, "perimeter_tidy", png)
+
+    # the result on all three test footprints, with every default
     fig, axes = plt.subplots(1, 3, figsize=(15, 5.6))
     for i, p in enumerate((V, K, B)):
-        draw_zones(axes[i], run(p), whole(p))
+        draw_zones(axes[i], run(p, cfg=CornerRayConfig()), whole(p))
         letter(axes[i], i)
     legend(fig, ZONE_KEYS, ncol=5)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
