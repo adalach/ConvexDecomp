@@ -27,7 +27,10 @@ const SEARCH_CONTROLS = [
     help: "Hard rule: a cut that leaves a convex zone thinner than this is refused, never relaxed. 0 = off." },
   { key: "beam_area_weighting", label: "Area weighting of the beam's score", min: 0, max: 1, step: 0.05, value: 1,
     help: "The score that ranks unfinished states. 1 = by area: big non-convex remainders count fully, so the beam does not drop a neat cut too early. The variant is chosen with the score's own area weighting." },
-  { key: "width", label: "Beam width", min: 1, max: 16, step: 1, value: 4, help: "States kept per step." },
+  { key: "start_width", label: "Starting beam width", min: 1, max: 16, step: 1, value: 3,
+    help: "States the beam keeps at first (at most the beam width below), across all depths. The children of the best state usually outrank the states still waiting, so a narrow beam follows one branch; the parked states come back only if nothing is found. With the adaptive budget off, the beam width below applies from the start." },
+  { key: "width", label: "Beam width", min: 1, max: 16, step: 1, value: 4,
+    help: "States kept per step at most: the adaptive budget widens the beam up to this while nothing is found." },
   { key: "depth", label: "Depth (cuts)", min: 2, max: 40, step: 1, value: 24 },
   { key: "max_reflex", label: "Reflex vertices tried per piece", min: 1, max: 24, step: 1, value: 8,
     help: "The ones closest to 90° first; each gives up to three cuts." },
@@ -55,7 +58,7 @@ const SCORE_PRESETS = [
 const SEARCH_PRESETS = [
   ["Default", {}],
   ["Paper 2026", { ranking: "reflex_first", bisector_always: false, min_corner_deg: 0, min_zone_width_m: 0 }],
-  ["Wide", { width: 8, max_reflex: 16, max_variants: 64 }],
+  ["Wide", { start_width: 8, width: 8, max_reflex: 16, max_variants: 64 }],
 ];
 
 const R = 24; // node radius in the tree

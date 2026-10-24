@@ -14,7 +14,7 @@ app imports `convexdecomp` from this repository's `src/`.
 | Part | What it does |
 | --- | --- |
 | Score sliders | `convexdecomp.core.scores.PartitionScore`: zones + w_C (1 − mean compactness) + w_R (1 − mean rectangularity) + narrow and small-zone penalties. The area weighting sets how much a zone's area counts in the means (1: by area, 0: every zone the same). Moving a slider re-ranks the found variants at once, then re-runs the search, because the score also decides which states the beam keeps. |
-| Search sliders | Beam ranking (reflex vertices first, or score first), the mid-angle cut at every reflex vertex, the smallest corner a cut may create (0 = off), the thinnest zone allowed (a hard rule, 0 = off), the area weighting of the beam's score, beam width, depth, reflex vertices per piece, variants to find, dead ends before giving up, smallest piece a cut may leave, snap tolerance, adaptive budget. A setting the engine does not have yet is greyed out and not passed on. |
+| Search sliders | Beam ranking (reflex vertices first, or score first), the mid-angle cut at every reflex vertex, the smallest corner a cut may create (0 = off), the thinnest zone allowed (a hard rule, 0 = off), the area weighting of the beam's score, the starting beam width (the adaptive budget's first width; it grows to the beam width only while nothing is found), beam width, depth, reflex vertices per piece, variants to find, dead ends before giving up, smallest piece a cut may leave, snap tolerance, adaptive budget. A setting the engine does not have yet is greyed out and not passed on. |
 | Tree | Each state with the piece the search cuts next in colour, the rest in grey, and the cut that made it in orange. The ring tells what the search did with it. Click a state to see it large; use the small button to fold a branch, and "+N more" to show all children. |
 | Variants | Every fully convex state the search found, plus reference decompositions, ranked by the current score with each term's share. |
 
@@ -49,7 +49,7 @@ scores as on the server and takes about 1.5 times as long.
   6 reflex corners, a courtyard, and a courtyard building, osm_0975, whose search makes some 2,000
   states in about 6 s in the browser. The page credits OpenStreetMap. `--local-examples` adds the
   local BEM4AI examples.
-- **Budget:** capped in the browser (beam width 8, depth 30, 16 reflex vertices per piece, 64 variants,
+- **Budget:** capped in the browser (starting and largest beam width 8, depth 30, 16 reflex vertices per piece, 64 variants,
   1,000 dead ends); a search still running after 60 s is stopped and the worker started again. One
   search runs at a time; of the searches asked for meanwhile, only the newest waits.
 

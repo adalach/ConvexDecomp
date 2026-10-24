@@ -123,6 +123,12 @@ def test_explorer_core_runs_without_a_server_and_caps_the_budget():
                                      "references": []}
     data = core.run({"example": "test_l_shape", "search": {"width": 30}}, limits={"width": 8})
     assert data["stats"]["success"] and data["request"]["search"]["width"] == 8
+    # The starting width reaches the adaptive budget, never above the beam width.
+    from convexdecomp.core.scores import PartitionScore
+
+    for start, width, first in ((3, 4, 3), (6, 8, 6), (8, 4, 4)):
+        cfg = core.config(core.SearchParams(start_width=start, width=width), PartitionScore())
+        assert (cfg.adaptive_search.initial_width, cfg.adaptive_search.max_width) == (first, width)
     # What the browser worker calls: errors come back as JSON with the server's status code.
     reply = json.loads(core.call_json("run", json.dumps({"example": "test_l_shape", "search": {"width": 0}})))
     assert reply["status"] == 422 and "width" in reply["error"]

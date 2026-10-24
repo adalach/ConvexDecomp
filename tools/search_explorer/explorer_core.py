@@ -101,7 +101,8 @@ _BOUNDS: Dict[str, tuple] = {
     "weight_compactness": (0, None, False), "area_weighting": (0, 1, False), "weight_rectangularity": (0, None, False),
     "weight_narrow": (0, None, False), "narrow_width_m": (0, None, True), "weight_small": (0, None, False),
     "small_area_m2": (0, None, True),
-    "depth": (1, 60, False), "width": (1, 32, False), "max_reflex": (1, 64, False), "max_variants": (1, 512, False),
+    "depth": (1, 60, False), "width": (1, 32, False), "start_width": (1, 32, False), "max_reflex": (1, 64, False),
+    "max_variants": (1, 512, False),
     "max_failed": (1, 5000, False), "min_area_m2": (0.1, None, False), "snap_m": (0, None, False),
     "min_corner_deg": (0, 45, False), "min_zone_width_m": (0, 10, False), "beam_area_weighting": (0, 1, False),
 }
@@ -124,6 +125,7 @@ class SearchParams:
     ranking: str = "score_first"
     depth: int = 24
     width: int = 4
+    start_width: int = 3  # the adaptive budget's first width; it grows to `width` only while nothing is found
     max_reflex: int = 8
     max_variants: int = 32
     max_failed: int = 500
@@ -174,7 +176,7 @@ def config(search: SearchParams, score: PartitionScore) -> Any:
         max_variants_per_polygon=s.max_variants, max_failed_states=s.max_failed, min_area_m2=s.min_area_m2,
         weight_parts=1.0, weight_compactness=score.weight_compactness, cut_snap_vertex_tolerance_m=s.snap_m,
         adaptive_search=T.ENGINE.adaptive_config(
-            enabled=s.adaptive, initial_depth=min(4, s.depth), initial_width=min(3, s.width),
+            enabled=s.adaptive, initial_depth=min(4, s.depth), initial_width=min(s.start_width, s.width),
             max_depth=s.depth, max_width=s.width, depth_step=1, width_step=1),
         beam_ranking=s.ranking,
     )

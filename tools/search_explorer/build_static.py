@@ -33,7 +33,8 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
 PYODIDE_VERSION = "314.0.7"  # Python 3.14, shapely 2.1.2
 # Caps on the search budget in the browser, and the time after which a run is stopped.
-LIMITS = {"width": 8, "depth": 30, "max_reflex": 16, "max_variants": 64, "max_failed": 1000, "seconds": 60}
+LIMITS = {"start_width": 8, "width": 8, "depth": 30, "max_reflex": 16, "max_variants": 64, "max_failed": 1000,
+          "seconds": 60}
 OSM_FOOTPRINTS = REPO_ROOT / "data" / "osm" / "osm_building_footprints_openstreetmap_odbl.gpkg"
 OSM_ATTRIBUTION = "Footprints © OpenStreetMap contributors, ODbL 1.0"
 PAGE_SCRIPTS = ("app.js", "style.css", "worker.js")  # static/config.js is written by the build
