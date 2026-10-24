@@ -8,7 +8,7 @@ page and proposes how it fits; the decisions marked as hers are hers. Read `READ
 ## What to load
 
 - The package `convexdecomp.corner_perimeter`, in this folder, at the ConvexDecomp commit named in the message that
-  brought this file (branch `osm-preprocessing`; the local `main` holds the same package since `bfb4091`). It imports
+  brought this file (branch `osm-preprocessing`; the public `main` holds the same package since `dafdb78`). It imports
   only numpy, shapely and `convexdecomp.core.scores`; it neither draws nor writes.
 - Load it the way `engines/convexdecomp.py` loads the decomposer: from its own read-only snapshot
   (`git archive <commit> src` into `_code/cd-<commit12>/src`, first on `sys.path`, the module checked to lie under
@@ -41,8 +41,10 @@ What ConvexDecomp's decomposition takes from it (`convexdecomp.osm.perimeter_zon
 needs pandas and geopandas besides the package): the perimeter zones in `perimeter_parts` with their roles
 (`perimeter_zone` or `thin_zone`) and the core parts in `interior_geom`; every zone and core part then goes to the
 decomposition as it is (a convex one comes back as one part, the others are cut); a footprint the procedure cannot
-zone is decomposed whole. On the 990 footprints with the engine at 1.2 m: 921 buildings fully convex, 69 with a
-zone the search could not cut, no area lost. Whether the workbench's Zones takes the same is Agata's decision.
+zone is decomposed whole. On ConvexDecomp's current working set (see "Samples" below) with the engine at 1.2 m:
+the perimeter gives 7,338 zones (107 thinner than 2 m, 371 not convex) and 689 core parts, and the decomposition
+921 of 990 buildings fully convex, 69 with a zone the search could not cut, no area lost. Whether the workbench's
+Zones takes the same is Agata's decision.
 
 ## The page
 
@@ -79,14 +81,20 @@ state after any step, if the page wants to step through them.
 once a run has applied the step, sets from its numbers like Geometry cleaning's: the buildings with the most thin
 zones and with the most zones that are not convex.
 
-**Fates and outputs of a run.** The only loss is `perimeter_failed` (none of the 990 footprints of the test
-sample). Thin and non-convex zones are kept: what to do with them is the Zones step's. Per building, `counts()` (or
+**Fates and outputs of a run.** The only loss is `perimeter_failed` (none of the 990 footprints, in either sample
+below). Thin and non-convex zones are kept: what to do with them is the Zones step's. Per building, `counts()` (or
 the preview's numbers) for the run's table and `zone_records(result)` as a long sidecar (`sample_id`, `zone`,
 `kind` zone/thin/core, `area_m2`, `min_width_m`, `convex`, geometry). The memo key of the group: the cleaned
 footprint, the `S6` settings and the snapshot's commit.
 
-**Time.** At `dafdb78`, 990 buildings in 68 s in one process at a load average of about 12: median 0.02 s per
-building, at most 4.4 s (the wing-end and bay checks run the procedure again for some buildings). None failed.
+**Time.** At `dafdb78`, in one process at a load average of about 12: the tuning snapshot's 990 buildings in 68 s
+(median 0.02 s per building, at most 4.4 s), the working set's in 83 s (median 0.02 s, at most 6.3 s). The wing-end
+and bay checks run the procedure again for some buildings. None failed.
+
+**Samples.** Two local files of 990 BEM4AI footprints each, with the same sample ids, neither in the repository: the
+tuning snapshot `temp/perimeter/subset_snapshot.pkl` (2026-10-14), on which the method was developed and every figure
+and rule count of the README was measured, and the current working set `data/bem4ai/subset_buildings_gdf.pkl`, which
+the decomposition notebook runs on; 161 footprints differ between the two.
 
 ## Checks for the task
 
@@ -97,9 +105,11 @@ building, at most 4.4 s (the wing-end and bay checks run the procedure again for
   radius 12 m gives 24 perimeter zones and 1 core part, no wing-end corner, and 24 wing-end corners with
   `wing_end_parallel_deg = 180` (then 1 perimeter zone, not convex, and the core); a 30 m square with a 10 m
   square courtyard in its middle gives 8 perimeter zones and 1 core part. In every case the zones tile the footprint
-  and keep every corner of its outline. On the 990 footprints of the test sample, with the defaults: 7,249 perimeter
-  zones, 92 thinner than 2 m, 362 not convex, no corner under 20°, no speck under 0.5 m², 721 footprints with none
-  of these, 363 without a core.
+  and keep every corner of its outline.
+- Totals with the defaults, for comparison at scale: on the tuning snapshot 7,249 perimeter zones, 92 thinner than
+  2 m, 362 not convex, no corner under 20°, no speck under 0.5 m², 721 footprints with none of these, 363 without a
+  core; on the working set 7,338 perimeter zones, 107 thinner than 2 m, 371 not convex, 1 corner under 20°, no
+  speck, 715 footprints with none of these, 364 without a core, 689 core parts.
 - The page in both profiles and at 1024, 1280 and 1500 px, in both themes, like the other step pages.
 - ConvexDecomp's own tests at the commit (outside `src/`, so not in the snapshot): `tests/test_corner_perimeter.py`
   (15 tests, nine real footprints with their expected counts, with the defaults and with the short walls, bays and
