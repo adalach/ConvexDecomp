@@ -20,6 +20,14 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "The two corners of a wing's end wall cast no ray when the wing is too narrow for two zones side by side; the "
      "wing's zones then reach from one side to the other. A wing end that leaves a thin zone is tried with its "
      "rays."),
+    ("short_walls", "Short walls",
+     "A short wall between two corners that both cast rays casts one ray, not two: the two rays would bound a "
+     "needle or a speck on the wall. A step keeps its reflex corner's ray, a chamfer casts one ray from its middle."),
+    ("bays", "Bays",
+     "A bay is a small protrusion from a facade: a run of convex corners between two reflex corners, where the "
+     "facade on both sides runs on along the line between them. Only the bay's two base corners cast rays, so "
+     "the bay and the triangle behind its opening become one zone instead of a fan of thin zones. While the "
+     "footprint keeps bad zones, each bay is tried with its rays."),
     ("rays", "Rays that meet",
      "Rule 1: rays that meet merge into one ray, which goes on in the middle. Rule 2: two rays running in opposite "
      "directions close to each other's corners become one line from corner to corner. Rule 3: a ray from a convex "
@@ -34,6 +42,12 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "Rule 7: zones thinner than the zone width that touch become one convex zone. Rule 8: a lone thin zone merges "
      "into a neighbour, after relinking one of its edges if needed. Rule 9: very sharp zone corners are cut off. "
      "Rule 10: specks join a neighbour. Rules 9, 7, 8 and 10 repeat until nothing changes."),
+    ("tidy", "Tidy zone corners",
+     "After each round of rules 9, 7, 8 and 10: inner zone corners close to an outline point move onto it, close "
+     "inner corners become one, corners within a few degrees of straight are straightened and points straight in "
+     "every zone are dropped. A move is kept only if the zones still tile the footprint, no convex zone becomes "
+     "non-convex, no zone gets thinner than the zone width and no sharp corner or speck appears; the outline never "
+     "moves."),
 )
 
 
@@ -49,7 +63,9 @@ def setting(default: Any, *, section: str, title: str, help: str, unit: str | No
 class CornerRayConfig:
     """Every threshold of the corner-ray perimeter. The defaults are the settings chosen on 2026-10-20, with the
     narrowest core raised from 1 m to 1.2 m on 2026-10-23 and the fixes of that day switched on (the wing-end
-    check, rule 7's width check, rule 10 and the repeat until nothing changes)."""
+    check, rule 7's width check, rule 10 and the repeat until nothing changes), and since 2026-10-24 one ray per
+    short wall, the bays and the tidying of zone corners, with rule 7 looking ahead before it gives up a hull and
+    rule 9 handing over a whole triangle only where a cut would run away or the merge is convex."""
 
     # band and rays
     band_m: float = setting(
@@ -84,6 +100,78 @@ class CornerRayConfig:
         True, section="wing_ends", title="Check each wing end",
         help="A wing end whose wing touches a zone thinner than the zone width is tried again with its rays; the "
              "result with fewer thin, non-convex and sharp zones and specks is kept.")
+
+    # short walls
+    short_wall_one_ray: bool = setting(
+        True, section="short_walls", title="One ray per short wall",
+        help="A wall shorter than the short wall length between two corners that both cast rays casts one ray: a "
+             "step (one convex, one reflex corner) only its reflex corner's ray, so a line still leaves every "
+             "reflex corner; a chamfer (two convex corners between longer walls) one ray from the middle of the "
+             "wall. The two rays of such a wall would bound a needle or a speck. A wing's end wall and a wall "
+             "between two reflex corners keep both rays.")
+    short_wall_m: float = setting(
+        1.5, section="short_walls", title="Short wall", unit="m", ge=0.0, le=5.0, lo=0.0, hi=3.0, step=0.05,
+        needs="short_wall_one_ray",
+        help="A wall between two corners shorter than this casts one ray. A chamfer counts only when the walls "
+             "before and after it are at least this long, so on a curve drawn as short walls no wall counts.")
+    short_wall_chamfers: bool = setting(
+        True, section="short_walls", title="Chamfers too", needs="short_wall_one_ray",
+        help="Also a short wall between two convex corners casts one ray; off: only steps.")
+    short_wall_midpoint: bool = setting(
+        True, section="short_walls", title="Chamfer ray from the middle", needs="short_wall_chamfers",
+        advanced=True,
+        help="A chamfer casts its ray from the middle of the wall; off: from the sharper of its two corners.")
+    short_wall_to_band: bool = setting(
+        True, section="short_walls", title="Aim at the band line's corner", needs="short_wall_one_ray",
+        help="The band line has the same step or chamfer as the outline. The one ray runs to the band line's "
+             "corner that the dropped ray (a step) or the chamfer's two rays, merged, would have reached, so that "
+             "corner is not left as a reflex corner of a zone. Off, or where the band line is not reached: along "
+             "the reflex corner's bisector, or the mean of the chamfer's two bisectors.")
+    short_wall_tooth: bool = setting(
+        True, section="short_walls", title="Teeth: continue the wall", needs="short_wall_one_ray", advanced=True,
+        help="A convex corner between two short steps (a tooth): the reflex corner of the shorter step casts the "
+             "one ray, the other continues the tooth's wall, so the two lines part instead of bounding a needle.")
+
+    # bays (protrusions from a facade)
+    bays: bool = setting(
+        True, section="bays", title="Bays cast rays only from their base",
+        help="A run of convex corners between two reflex corners (the base corners), no wider and deeper than "
+             "below, where the walls on both sides run on along the line between the base corners: the corners "
+             "of the run cast no ray. The bay and the triangle behind its opening become one zone.")
+    bay_width_band: float = setting(
+        2.5, section="bays", title="Widest bay opening", unit="× band", ge=0.0, le=10.0, lo=0.0, hi=4.0,
+        step=0.1, needs="bays",
+        help="The distance between the two base corners, at most this many band depths. At two band depths the "
+             "rays of two right-angled base corners meet on the band line.")
+    bay_depth_band: float = setting(
+        1.2, section="bays", title="Deepest bay", unit="× band", ge=0.0, le=5.0, lo=0.0, hi=2.0, step=0.05,
+        needs="bays",
+        help="How far the bay reaches out from the line between its base corners, at most this many band depths. "
+             "A whole round building is far deeper than its band and keeps its rays.")
+    bay_edge_deg: float = setting(
+        45.0, section="bays", title="Facade runs on within", unit="deg", ge=0.0, le=180.0, lo=0.0, hi=90.0,
+        step=1.0, needs="bays",
+        help="The walls before and after the bay must each run within this angle of the line between its base "
+             "corners: the bay sits on a continuous facade, not on a step or a corner (180 drops the test).")
+    bay_min_corners: float = setting(
+        2.0, section="bays", title="Fewest bay corners", unit="corners", ge=1.0, le=20.0, lo=1.0, hi=6.0,
+        step=1.0, needs="bays",
+        help="A bay has at least this many corners between its base corners. With 2, a rectangular bump counts "
+             "too (one with parallel sides narrower than the wing-end width stays a wing end); with 3, only "
+             "polygonal and rounded bays.")
+    bay_wiggle_deg: float = setting(
+        5.0, section="bays", title="Wiggle on a curve", unit="deg", ge=0.0, le=30.0, lo=0.0, hi=15.0, step=0.5,
+        needs="bays", advanced=True,
+        help="A corner of the bay may be reflex by less than this (a wiggle where a curve was drawn as short "
+             "walls); it then casts no ray either.")
+    bays_in_band: bool = setting(
+        True, section="bays", title="Bays hold no core", needs="bays",
+        help="The core is offset from the footprint with its bays cut off at their openings, so a bay deeper "
+             "than the band holds no sliver of core and the band line runs straight behind its opening.")
+    bay_check: bool = setting(
+        True, section="bays", title="Check each bay", needs="bays",
+        help="While the footprint keeps a thin, non-convex or sharp zone or a speck, each bay is tried again with "
+             "the rays of all its corners; the result with fewer of them is kept.")
 
     # rays that meet (rules 1 to 3)
     opposite_gap_m: float = setting(
@@ -179,6 +267,37 @@ class CornerRayConfig:
     repeat_until_stable: bool = setting(
         True, section="tiny", title="Repeat until nothing changes", advanced=True,
         help="Rules 9, 7, 8 and 10 run again, in turn, until the zones no longer change (at most 8 rounds).")
+
+    # tidy zone corners
+    snap_to_outline: bool = setting(
+        True, section="tidy", title="Snap to the outline",
+        help="An inner zone corner closer than the tidy reach to an outline point (a footprint corner or a line end "
+             "on the facade) moves onto it. The outline point itself never moves.")
+    merge_close_again: bool = setting(
+        True, section="tidy", title="Close points once more",
+        help="Rule 5 once more, on the zones the later rules left: inner zone corners closer than the tidy reach "
+             "become one (at their mean, or on one of them), in groups at most the widest group across.")
+    tidy_close_m: float = setting(
+        1.5, section="tidy", title="Tidy reach", unit="m", ge=0.0, le=5.0, lo=0.0, hi=3.0, step=0.05,
+        help="How close an inner zone corner must be to an outline point to snap onto it, or to another inner "
+             "corner to become one with it.")
+    split_pinched: bool = setting(
+        True, section="tidy", title="Split pinched zones",
+        help="Where a tidy move brings two corners of one zone together, the zone falls apart "
+             "into its two parts, each a zone of its own, if both are convex; otherwise the move is skipped.")
+    straighten_corners: bool = setting(
+        True, section="tidy", title="Straighten near-straight corners",
+        help="An inner point where a zone's corner is within the tolerance of 180 degrees moves onto the straight "
+             "line between that corner's two neighbours, in every zone that has it.")
+    straight_deg: float = setting(
+        2.0, section="tidy", title="Near straight within", unit="deg", ge=0.0, le=15.0, lo=0.0, hi=5.0, step=0.1,
+        needs="straighten_corners", help="A zone corner this close to 180 degrees counts as nearly straight.")
+    drop_collinear: bool = setting(
+        True, section="tidy", title="Drop collinear points",
+        help="An inner point that is straight in every zone that has it is dropped: no zone has a corner there.")
+    collinear_deg: float = setting(
+        0.1, section="tidy", title="Collinear within", unit="deg", ge=0.0, le=5.0, lo=0.0, hi=1.0, step=0.01,
+        needs="drop_collinear", advanced=True, help="A point this close to straight counts as collinear.")
 
     def __post_init__(self) -> None:
         for f in fields(self):

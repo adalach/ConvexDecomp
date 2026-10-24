@@ -8,6 +8,8 @@ outline, so the zones always tile the footprint exactly.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import shapely
 from shapely.geometry import LineString, Point, Polygon
@@ -262,7 +264,7 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
             if hull.difference(poly).area > 1e-6:
                 continue  # the hull reaches outside the footprint
             extra = hull.difference(union)
-            ok, too_thin = True, False
+            ok, thinned = True, []
             for j, (z, k) in enumerate(zones):
                 if j in members or shapely.intersection(z, extra).area <= 1e-6:
                     continue
@@ -272,13 +274,21 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
                     break
                 limit = cfg.narrow_core_m if k == "core" else cfg.min_zone_width_m
                 if cfg.hull_keeps_width and minimum_width(rest) < min(limit, minimum_width(z)) - 1e-9:
-                    too_thin = True  # the hull would leave this zone too thin: merge without the hull
-                    break
+                    thinned.append(rest)  # the hull would leave this zone too thin
                 changes[j] = rest
             if not ok:
                 continue
-            if too_thin:
-                changes = {}
+            if thinned:  # take the hull only if the rest of rules 7 and 8 then merge every zone it thins
+                trial = [(changes.get(j, z), kind_of(changes[j], k, cfg.min_zone_width_m) if j in changes else k)
+                         for j, (z, k) in enumerate(zones) if j not in members]
+                trial.append((hull, kind_of(hull, "zone", cfg.min_zone_width_m)))
+                plain = replace(cfg, hull_keeps_width=False)
+                after, _ = absorb_lone_tiny_zones(poly, merge_tiny_zones(poly, trial, plain)[0], plain)
+                still_thin = [z for z, k in after if k == "thin"]
+                if any(any(z.covers(r.representative_point()) for z in still_thin) for r in thinned):
+                    changes = {}  # merge without the hull
+                else:
+                    new = hull
             else:
                 new = hull
         for j, rest in changes.items():
@@ -421,11 +431,13 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
             if j is None:
                 continue  # nobody to take the tip
         rest = Polygon(np.vstack([c[:t], [p], c[t + 1:]]), [h.coords for h in zones[i][0].interiors])
-        if len(c) == 3 and not zones[i][0].interiors and any(angle < cfg.sharp_corner_deg
-                                                               for angle, _ in convex_corners(rest)[1]):
-            taker = one_polygon(shapely.union_all([zones[j][0], zones[i][0]]))
-            if taker is None or not taker.is_valid:
-                continue
+        rc, rest_angles = convex_corners(rest)
+        at_b = [angle for angle, s in rest_angles if np.linalg.norm(rc[s] - b) < 1e-9]
+        whole_taker = one_polygon(shapely.union_all([zones[j][0], zones[i][0]])) \
+            if len(c) == 3 and not zones[i][0].interiors else None
+        runaway = bool(at_b) and at_b[0] < cfg.sharp_corner_deg  # the cut would make a new sharp corner at B
+        if whole_taker is not None and whole_taker.is_valid and (runaway or is_convex(whole_taker)):
+            taker = whole_taker
             zones[j] = (taker, kind_of(taker, zones[j][1], cfg.min_zone_width_m))
             whole.append(zones[i][0])
             del zones[i]

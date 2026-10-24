@@ -40,9 +40,9 @@ that are not convex.
 Like `StepPage` for `S2`, `S3` and `S5`: the settings in sections beside a row of telling examples drawn before and
 after at one scale, computed again when the sliders rest, then "Apply to all".
 
-**Settings.** `settings_table()` (or `python -m convexdecomp.corner_perimeter settings`) gives six sections in
-order (Band and rays; Wing ends; Rays that meet; Narrow core; Close points and narrow zones; Tiny zones and sharp
-corners) with each field's title, help, unit, the values a run accepts (`ge`, `le`), a slider range that holds the
+**Settings.** `settings_table()` (or `python -m convexdecomp.corner_perimeter settings`) gives nine sections in
+order (Band and rays; Wing ends; Short walls; Bays; Rays that meet; Narrow core; Close points and narrow zones; Tiny
+zones and sharp corners; Tidy zone corners) with each field's title, help, unit, the values a run accepts (`ge`, `le`), a slider range that holds the
 default (`lo`, `hi`, `step`), the switch it `needs` and whether it is `advanced`: what `pages.py`'s `Section` and
 `Slider` take. Switches are booleans; every other field is a number. The README lists them all.
 
@@ -50,7 +50,7 @@ default (`lo`, `hi`, `step`), the switch it `needs` and whether it is `advanced`
 
 | Key | What |
 | --- | --- |
-| `layers` | shapely geometries in the footprint's frame (convert to WKB): before `footprint`; after, in drawing order, `perimeter_zones`, `thin_zones`, `core`, `not_convex` (outlines), `band_line`, `rays`, `merged_rays`, `corner_lines`, `wing_ends` (`LAYERS`, `LAYER_TITLES`) |
+| `layers` | shapely geometries in the footprint's frame (convert to WKB): before `footprint`; after, in drawing order, `perimeter_zones`, `thin_zones`, `core`, `not_convex` (outlines), `band_line`, `rays`, `merged_rays`, `corner_lines`, `wing_ends`, `bay_corners` (`LAYERS`, `LAYER_TITLES`) |
 | `numbers` | `NUMBERS` in order, as `(key, label, unit)`: corners, wing-end corners, perimeter zones, core parts, core share, thin and non-convex zones, corners under 20°, specks, the narrowest zone, then how often each rule acted |
 | `fate` | `{"status": "kept"}`, or `{"status": "dropped", "reason": "perimeter_failed", "detail": {"error": ...}}` |
 | `seconds`, `result` | the time, and the `PerimeterResult` (or `None` when dropped) |

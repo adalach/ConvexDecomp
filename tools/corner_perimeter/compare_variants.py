@@ -32,11 +32,20 @@ VARIANTS = {
     "wing ends: rays from every corner": {"wing_end_max_m": 0.0},
     "wing ends: any wall under 4 m, curves too": {"wing_end_parallel_deg": 180.0},
     "wing ends: only long wings": {"wing_end_long_sides": True},
+    "wing ends: no check": {"wing_end_check": False},
+    "short walls: two rays each": {"short_wall_one_ray": False},
+    "bays: off": {"bays": False},
     "rule 3: discard every ray that reaches nothing": {"keep_reflex_rays": False},
     "rule 3: discard none (cast them again)": {"recast_discarded": True},
     "rule 4: narrow core always half way": {"similar_sides_ratio": 0.0},
+    "rule 4: narrowest core 1 m": {"narrow_core_m": 1.0},
+    "rule 7: no width check": {"hull_keeps_width": False},
     "rule 9: skip cuts that make a convex zone non-convex": {"sharp_keep_convex": True},
     "no rules 7 and 8 after rule 9": {"repeat_tiny_after_sharp": False},
+    "no rule 10 (specks stay)": {"join_specks": False},
+    "rules 9, 7, 8 and 10 once, no repeat": {"repeat_until_stable": False},
+    "no tidy step": {"snap_to_outline": False, "merge_close_again": False, "straighten_corners": False,
+                     "drop_collinear": False, "split_pinched": False},
 }
 TIME_LIMIT_S = 60
 

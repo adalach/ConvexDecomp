@@ -11,7 +11,7 @@ from shapely.geometry import LineString, Point, Polygon
 from shapely.geometry.polygon import orient
 from shapely.ops import linemerge, substring
 
-from .geometry import EPS, Line, first_hit, points_of, reach, unit
+from .geometry import EPS, Line, first_hit, line_x, points_of, reach, unit
 from .settings import CornerRayConfig
 
 
@@ -119,6 +119,189 @@ def wing_end_pairs(cs, cfg: CornerRayConfig) -> list[tuple[int, int, int, int]]:
 def wing_end_corners(cs, cfg: CornerRayConfig) -> set[int]:
     """The corners (indices into cs) that cast no ray: the two corners of every wing end (:func:`wing_end_pairs`)."""
     return {i for _, k, m, _ in wing_end_pairs(cs, cfg) for i in (k, m)}
+
+
+def short_wall_plan(poly: Polygon, cs, skip: set[int], cfg: CornerRayConfig):
+    """One ray per short wall (``short_wall_one_ray``): ``(drop, insert, records)``. ``drop`` are the corners
+    (indices into cs) that cast no ray of their own, ``insert`` the rays cast in their place, as corners
+    ``(point, direction, angle, ring)`` keyed by the index of the corner whose place they take in ring order,
+    ``records`` one dict per short wall (``kind`` step or chamfer, ``wall``, ``length``, the ``dropped`` corner
+    points, the ``ray`` point, and whether it was aimed at the band line, ``to_band``, or is a tooth's, ``tooth``).
+
+    A wall k-m between two neighbouring corners of a ring is short when shorter than ``short_wall_m``; it counts when
+    both corners cast rays (neither is in ``skip``, the wing-end corners). A step (one reflex, one convex corner):
+    only the reflex corner casts, so a line still leaves every reflex corner. A chamfer (two convex corners, with
+    ``short_wall_chamfers``) whose walls before and after are at least ``short_wall_m`` long: one ray from the middle
+    of the wall (``short_wall_midpoint``), or from the sharper corner. A wall between two reflex corners keeps both
+    rays: they part, and both corners need a line.
+
+    With ``short_wall_to_band`` the ray runs to the band line's corner: where the dropped convex corner's ray meets
+    the band line (a step), or where a ray from the meeting point of the chamfer's two rays, along the bisector of
+    the walls before and after, meets it (a chamfer); a step's reflex corner keeps its bisector when the aimed ray
+    would leave one side of the corner at 180 degrees or more. With ``short_wall_tooth``, of the two reflex corners
+    of a tooth (a convex corner between two short steps) the second continues the tooth's wall."""
+    drop: set[int] = set()
+    insert: dict[int, tuple] = {}
+    records: list[dict] = []
+    if not cfg.short_wall_one_ray or cfg.short_wall_m <= 0:
+        return drop, insert, records
+    short = cfg.short_wall_m
+    oriented = orient(poly, sign=1.0)
+    rings = [oriented.exterior, *oriented.interiors]
+    ring_xy = [np.asarray(r.coords)[:-1] for r in rings]
+    inside = poly.buffer(EPS)
+    core0 = poly.buffer(-cfg.band_m, join_style="mitre", mitre_limit=10.0) if cfg.short_wall_to_band else Polygon()
+    band0 = core0.boundary if not core0.is_empty else LineString()
+    far = reach(poly)
+
+    def band_corner(start: np.ndarray, src: np.ndarray, d: np.ndarray):
+        """Where the ray from src along d first meets the band line, if before the facade and a straight line from
+        start reaches it inside the footprint; else None."""
+        if band0.is_empty:
+            return None
+        s, kind = first_hit(src, d, [(poly.boundary, "facade"), (band0, "band")], far)
+        x = src + s * d
+        if kind != "band" or np.linalg.norm(x - start) < EPS or not inside.covers(LineString([start, x])):
+            return None
+        return x
+
+    def wall_normal(r: int, p: np.ndarray, after: bool) -> np.ndarray:
+        """The inward normal of the outline edge arriving at (after=False) or leaving (after=True) the vertex p."""
+        c = ring_xy[r]
+        i = int(np.argmin(np.linalg.norm(c - p, axis=1)))
+        a, b = (c[i], c[(i + 1) % len(c)]) if after else (c[i - 1], c[i])
+        d = unit(b - a)
+        return np.array([-d[1], d[0]])
+
+    walls = []  # (length, previous wall, next wall, k, m)
+    for r in sorted({c[3] for c in cs}):
+        ks = [k for k, c in enumerate(cs) if c[3] == r]
+        n = len(ks)
+        if n < 3:
+            continue
+        for j in range(n):
+            h, k, m, q = ks[j - 1], ks[j], ks[(j + 1) % n], ks[(j + 2) % n]
+            length = float(np.linalg.norm(cs[m][0] - cs[k][0]))
+            if length >= short or k in skip or m in skip:
+                continue
+            walls.append((length, float(np.linalg.norm(cs[k][0] - cs[h][0])),
+                          float(np.linalg.norm(cs[q][0] - cs[m][0])), k, m))
+    walls.sort(key=lambda w: w[0])  # the shortest first
+
+    first: dict[int, int] = {}  # a dropped convex corner: the reflex corner of the (shorter) step that dropped it
+    for length, _, _, k, m in walls:  # steps: only the reflex corner's ray
+        rk, rm = cs[k][2] > 180.0, cs[m][2] > 180.0
+        if rk == rm:
+            continue
+        convex, reflex = (m, k) if rk else (k, m)
+        drop.add(convex)
+        p, bis, angle, r = cs[reflex]
+        d, aimed, tooth = bis, False, False
+        if cfg.short_wall_tooth and first.get(convex, reflex) != reflex and reflex not in insert:
+            # a tooth: the convex corner sits between two short steps, and the first step's reflex corner took its
+            # ray's place. This reflex corner continues the tooth's wall, so the two reflex corners' lines part
+            # instead of bounding a needle (one side of the corner straight, the other its angle less 180°)
+            d, tooth = unit(p - cs[convex][0]), True
+        elif cfg.short_wall_to_band and reflex not in insert:
+            x = band_corner(p, cs[convex][0], cs[convex][1])
+            if x is not None:
+                u = unit(x - p)
+                # the ray must leave both sides of the reflex corner under 180 degrees
+                if math.degrees(math.acos(np.clip(u @ bis, -1.0, 1.0))) < (angle - 180.0) / 2.0 - 1.0:
+                    d, aimed = u, True
+        if aimed or tooth:
+            insert[reflex] = (p, d, angle, r)
+            drop.add(reflex)
+        first.setdefault(convex, reflex)
+        records.append(dict(kind="step", wall=(cs[k][0], cs[m][0]), length=length, dropped=[cs[convex][0]],
+                            ray=p, to_band=aimed, tooth=tooth))
+    if not cfg.short_wall_chamfers:
+        return drop, insert, records
+
+    for length, before, after, k, m in walls:  # chamfers between longer walls: one ray
+        if cs[k][2] > 180.0 or cs[m][2] > 180.0 or k in drop or m in drop or before < short or after < short:
+            continue
+        r = cs[k][3]
+        if cfg.short_wall_midpoint:
+            ring = rings[r]
+            dk, dm = ring.project(Point(cs[k][0])), ring.project(Point(cs[m][0]))
+            if dm <= dk:
+                dm += ring.length
+            start = np.asarray(ring.interpolate(((dk + dm) / 2.0) % ring.length).coords[0])
+            bis = cs[k][1] + cs[m][1]
+            d, angle, at, dropped = bis / np.linalg.norm(bis), cs[k][2] + cs[m][2] - 180.0, k, [cs[k][0], cs[m][0]]
+        else:
+            at = k if cs[k][2] <= cs[m][2] else m
+            start, d, angle = cs[at][0], cs[at][1], cs[at][2]
+            dropped = [cs[m if at == k else k][0]]
+        aimed = False
+        meet = line_x(cs[k][0], cs[k][1], cs[m][0], cs[m][0] + cs[m][1])  # where the two rays meet
+        uv = wall_normal(r, cs[k][0], after=False) + wall_normal(r, cs[m][0], after=True)
+        if cfg.short_wall_to_band and meet is not None and (meet - cs[k][0]) @ cs[k][1] > 0 \
+                and np.linalg.norm(uv) > 1e-6:
+            x = band_corner(start, meet, unit(uv))
+            if x is not None and (x - start) @ d > 0:
+                d, aimed = unit(x - start), True
+        insert[at] = (start, d, angle, r)
+        drop |= {k, m}
+        records.append(dict(kind="chamfer", wall=(cs[k][0], cs[m][0]), length=length, dropped=dropped,
+                            ray=start, to_band=aimed, tooth=False))
+    return drop, insert, records
+
+
+def _angle_between(u: np.ndarray, v: np.ndarray) -> float:
+    """The unsigned angle between two directions, 0 to 180 degrees."""
+    return math.degrees(math.acos(np.clip(u @ v / (np.linalg.norm(u) * np.linalg.norm(v)), -1.0, 1.0)))
+
+
+def bay_runs(poly: Polygon, cs, cfg: CornerRayConfig) -> list[tuple[int, tuple[int, ...], int]]:
+    """The bays, as (a, inner, b) indices into cs: a run of at least ``bay_min_corners`` consecutive corners
+    between the two reflex base corners a and b, every inner corner convex (or reflex by less than
+    ``bay_wiggle_deg``), with
+
+    - the opening (a to b) inside the footprint and at most ``bay_width_band`` band depths long,
+    - every inner corner outside the opening's line, the farthest at most ``bay_depth_band`` band depths out,
+    - the wall before a and the wall after b each within ``bay_edge_deg`` of the opening's direction: the facade
+      runs on along one line on both sides (the continuous edge the bay protrudes from).
+
+    The inner corners cast no ray; the base corners do."""
+    out: list[tuple[int, tuple[int, ...], int]] = []
+    if not cfg.bays:
+        return out
+    max_w, max_d = cfg.bay_width_band * cfg.band_m, cfg.bay_depth_band * cfg.band_m
+    inside = poly.buffer(1e-6)
+    for r in sorted({c[3] for c in cs}):
+        ks = [k for k, c in enumerate(cs) if c[3] == r]
+        n = len(ks)
+        reflex = [cs[k][2] >= 180.0 + cfg.bay_wiggle_deg for k in ks]
+        if sum(reflex) < 2:
+            continue
+        for t in range(n):
+            if not reflex[t]:
+                continue
+            run, u = [], (t + 1) % n
+            while not reflex[u]:
+                run.append(u)
+                u = (u + 1) % n
+            if len(run) < cfg.bay_min_corners:
+                continue
+            a, b = ks[t], ks[u]
+            pa, pb = cs[a][0], cs[b][0]
+            chord = pb - pa
+            width = float(np.linalg.norm(chord))
+            if width < EPS or width > max_w:
+                continue
+            e = chord / width
+            out_side = [-(e[0] * (cs[ks[i]][0][1] - pa[1]) - e[1] * (cs[ks[i]][0][0] - pa[0])) for i in run]
+            if min(out_side) < -1e-3 or max(out_side) > max_d:  # the inner corners lie outside the opening
+                continue
+            before, after = pa - cs[ks[(t - 1) % n]][0], cs[ks[(u + 1) % n]][0] - pb
+            if max(_angle_between(before, chord), _angle_between(after, chord)) > cfg.bay_edge_deg:
+                continue
+            if not inside.covers(LineString([pa, pb])):
+                continue
+            out.append((a, tuple(ks[i] for i in run), b))
+    return out
 
 
 def close_pairs(poly: Polygon, cs, rays: list[LineString], cfg: CornerRayConfig):

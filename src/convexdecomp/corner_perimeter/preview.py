@@ -24,7 +24,7 @@ from .settings import CornerRayConfig
 LAYERS = {
     "before": ("footprint",),
     "after": ("perimeter_zones", "thin_zones", "core", "not_convex", "band_line", "rays", "merged_rays",
-              "corner_lines", "wing_ends"),
+              "corner_lines", "wing_ends", "bay_corners"),
 }
 #: what each layer is, in words
 LAYER_TITLES = {
@@ -38,12 +38,16 @@ LAYER_TITLES = {
     "merged_rays": "Rule 1: merged rays",
     "corner_lines": "Rule 2: corner-to-corner lines",
     "wing_ends": "Wing-end corners without rays",
+    "bay_corners": "Bay corners without rays",
 }
 #: the numbers of a preview, in order: (key, label, unit)
 NUMBERS = (
     ("corners", "Corners", None),
     ("wing_end_corners", "Wing-end corners without rays", None),
     ("wing_ends_restored", "Wing-end corners given their rays back", None),
+    ("bay_corners", "Bay corners without rays", None),
+    ("bay_corners_restored", "Bay corners given their rays back", None),
+    ("short_walls", "Short walls casting one ray", None),
     ("zones", "Perimeter zones", None),
     ("core_parts", "Core parts", None),
     ("core_share_pct", "Core share of the floor area", "%"),
@@ -66,6 +70,10 @@ NUMBERS = (
     ("sharp_cuts", "Rule 9: sharp corners cut", None),
     ("sharp_whole", "Rule 9: sharp triangles handed over whole", None),
     ("specks_joined", "Rule 10: specks joined to a neighbour", None),
+    ("snapped", "Tidy: inner corners snapped to the outline", None),
+    ("merged_again", "Tidy: groups of close points merged once more", None),
+    ("straightened", "Tidy: near-straight corners straightened", None),
+    ("collinear_dropped", "Tidy: collinear points dropped", None),
 )
 
 
@@ -83,6 +91,7 @@ def layers(result: PerimeterResult) -> dict[str, list[Any]]:
         "merged_rays": [ln.geom for ln in result.lines if ln.kind == "apex"],
         "corner_lines": [ln.geom for ln in result.lines if ln.kind == "merged"],
         "wing_ends": [MultiPoint([Point(p) for p in result.wing_ends])] if result.wing_ends else [],
+        "bay_corners": [MultiPoint([Point(p) for p in result.bay_corners])] if result.bay_corners else [],
     }
 
 

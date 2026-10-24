@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The figures of the Obsidian note "Convex Decomposition Perimeter": one per step, before and after, zoomed on
-examples of the footprint sample (the three test footprints, Angers_0018, Exeter_0008, Alicante_0030, Wroclaw_0046,
-Riga_0034, La_Linea_de_la_Concepcion_0016, Almere_0021 and Caen_0016)::
+examples of the footprint sample (the three test footprints, Angers_0018, Derby_0029, Aldershot_0005, Exeter_0008,
+Alicante_0030, Wroclaw_0046, Riga_0034, La_Linea_de_la_Concepcion_0016, Bucharest_0003, Almere_0021, Caen_0016,
+Liverpool_0042, Strasbourg_0020, Athens_0005, Brussels_0025 and Bari_0003)::
 
     python tools/corner_perimeter/note_figures.py --out /path/to/attachments [--png <preview dir>]
 
@@ -85,6 +86,19 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     legend(fig, ["outline", "band", "band_line", "ray", "ray_r", "apex", "wing_end", "zone", "thin"], ncol=9)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     save(fig, out, "perimeter_wing_ends", png)
+
+    # the wing-end check: stepped blocks whose narrow end keeps its rays (Derby, Aldershot)
+    no_check = CornerRayConfig(wing_end_check=False)
+    fig, axes = plt.subplots(2, 2, figsize=(10, 5.6))
+    for row, p in enumerate(g.loc[s, "geometry"] for s in ("Derby_0029", "Aldershot_0005")):
+        before, after = run(p, cfg=no_check), run(p)
+        pair(axes[row], before, after, whole(p), letters=(2 * row, 2 * row + 1))
+        for ax, r in zip(axes[row], (before, after)):
+            xy = np.array(r.wing_ends).reshape(-1, 2)
+            ax.scatter(xy[:, 0], xy[:, 1], marker="x", s=45, color="#252525", linewidths=1.4, zorder=8)
+    legend(fig, ZONE_KEYS[:3] + ["wing_end"], ncol=4)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    save(fig, out, "perimeter_wing_end_check", png)
 
     # rule 1: rays that meet merge (Krakow's lower wing, two bays)
     w = ((-4.5, 18.0), (-17.0, -6.5))
@@ -179,6 +193,19 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     save(fig, out, "perimeter_tiny_touching", png)
 
+    # rule 7's width check: Bucharest's rounded bay, before rule 7, with the hull, merged without it
+    Bu = g.loc["Bucharest_0003", "geometry"]
+    w = window((4.6, 23.0), 6.5, 4.6)
+    fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.9))
+    draw_zones(axes[0], run(Bu, "corner_groups"), w)
+    draw_zones(axes[1], run(Bu, "tiny_touching", CornerRayConfig(hull_keeps_width=False)), w)
+    draw_zones(axes[2], run(Bu, "tiny_touching"), w)
+    for i, ax in enumerate(axes):
+        letter(ax, i)
+    legend(fig, ZONE_KEYS, ncol=5)
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    save(fig, out, "perimeter_tiny_touching_width", png)
+
     # rule 8: lone tiny zones merge into a neighbour, after a relink if needed (Almere, Bognor's lower wing)
     examples = [(M, window((30.7, -2.9), 4.2, 3.4)), (B, window((-6.5, -12.2), 4.5, 3.4))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 6.8))
@@ -196,6 +223,32 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     legend(fig, ZONE_KEYS + ["cut"], ncol=6)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_sharp_corners", png)
+
+    # rule 9, who takes the tip: a triangle handed over whole (Liverpool, its outline dashed after), the shorter
+    # edge on the outline (Strasbourg)
+    examples = [("Liverpool_0042", window((12.7, 7.8), 10.5, 4.6)), ("Strasbourg_0020", window((0.4, -3.3), 2.8, 1.5))]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 5.6))
+    for row, (sid, w) in enumerate(examples):
+        p = g.loc[sid, "geometry"]
+        after = run(p, "sharp")
+        pair(axes[row], run(p, "tiny_lone"), after, w, letters=(2 * row, 2 * row + 1), cuts=True)
+        for z in after.sharp_whole:
+            plot_line(z.exterior, ax=axes[row, 1], add_points=False, color=PINK, linewidth=1.8, linestyle=(0, (2, 1)))
+    legend(fig, ZONE_KEYS + ["cut"], ncol=6)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    save(fig, out, "perimeter_sharp_takers", png)
+
+    # rule 10: specks join a neighbour (Brussels' chamfer, Bari's step)
+    examples = [("Brussels_0025", window((8.9, 8.2), 3.0, 2.1)), ("Bari_0003", window((2.8, -14.3), 3.0, 2.1))]
+    fig, axes = plt.subplots(2, 2, figsize=(9, 6.4))
+    for row, (sid, w) in enumerate(examples):
+        p = g.loc[sid, "geometry"]
+        before = run(p, "sharp")
+        pair(axes[row], before, run(p), w, letters=(2 * row, 2 * row + 1))
+        corner_dots(axes[row, 0], before)
+    legend(fig, ZONE_KEYS, ncol=5)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    save(fig, out, "perimeter_specks", png)
 
     # the result on all three test footprints
     fig, axes = plt.subplots(1, 3, figsize=(15, 5.6))
