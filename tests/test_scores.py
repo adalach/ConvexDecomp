@@ -135,6 +135,22 @@ def test_min_zone_width_is_a_hard_rule():
     assert not decompose_polygon_with_stats(almost, ConvexDecompositionConfig(min_zone_width_m=2.0))["convex_success"]
 
 
+# An L shape with a nub 1.5 m deep: the cut along the step leaves the nub as a compact zone
+# 1.5 m wide; the mid-angle cut gives two zones at least 2.5 m wide but less compact ones.
+NUB = Polygon([(0, 0), (10, 0), (10, 6), (2.5, 6), (2.5, 7.5), (0, 7.5)])
+
+
+def test_weight_narrow_trades_a_narrow_zone_for_another_cut():
+    assert ConvexDecompositionConfig().weight_narrow == 0.0
+    plain = decompose_polygon_with_stats(NUB, ConvexDecompositionConfig())["best_variant"]
+    assert min(minimum_width(p) for p in plain) < 2.0
+    # At weight 5 the nub costs 5 x (2 - 1.5) / 2 = 1.25, more than the mid-angle cut loses in compactness.
+    costly = decompose_polygon_with_stats(NUB, ConvexDecompositionConfig(weight_narrow=5.0))["best_variant"]
+    assert len(costly) == 2
+    assert min(minimum_width(p) for p in costly) >= 2.0
+    assert math.isclose(sum(p.area for p in costly), NUB.area, rel_tol=1e-9)
+
+
 
 def test_the_defaults_are_the_decided_settings():
     cfg = ConvexDecompositionConfig()

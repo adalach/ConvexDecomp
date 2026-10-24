@@ -146,6 +146,15 @@ class ConvexDecompositionConfig:
         pieces; counted like the finished zones, a state that has cut one neat
         block off a big remainder looks worse than it is, and the beam drops
         the path to the better result.
+    weight_narrow : float
+        Cost of a zone narrower than `narrow_width_m`, in both scores: each
+        convex piece costs ``weight_narrow x (narrow_width_m - width) /
+        narrow_width_m`` (0, the default, turns it off). With a hard
+        `min_zone_width_m` below `narrow_width_m`, zones between the two are
+        allowed but cost: at weight 5 and 2 m, a 1 m zone costs as much as 2.5
+        extra zones.
+    narrow_width_m : float
+        The width below which a zone costs `weight_narrow`.
     min_concavity_deg : float
         Minimum concavity (in degrees) for a vertex to be treated as a
         meaningful reflex. Smaller concavities are considered "almost straight".
@@ -205,6 +214,8 @@ class ConvexDecompositionConfig:
     weight_compactness: float = 20.0
     area_weighting: float = 0.0
     beam_area_weighting: float = 1.0
+    weight_narrow: float = 0.0
+    narrow_width_m: float = 2.0
     min_concavity_deg: float = 2.0
     max_reflex_per_node: Optional[int] = None
     track_time: bool = False
@@ -682,20 +693,22 @@ def _partition_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -
     """
     if cfg.score_fn is not None:
         return float(cfg.score_fn(list(polys)))
-    if cfg.area_weighting == 1.0:
+    if cfg.area_weighting == 1.0 and not cfg.weight_narrow:
         return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
     return PartitionScore(weight_parts=cfg.weight_parts, weight_compactness=cfg.weight_compactness,
-                          area_weighting=cfg.area_weighting)(list(polys))
+                          area_weighting=cfg.area_weighting, weight_narrow=cfg.weight_narrow,
+                          narrow_width_m=cfg.narrow_width_m)(list(polys))
 
 
 def _beam_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
     """The score that ranks states while the search runs (lower is better)."""
     if cfg.score_fn is not None:
         return float(cfg.score_fn(list(polys)))
-    if cfg.beam_area_weighting == 1.0:
+    if cfg.beam_area_weighting == 1.0 and not cfg.weight_narrow:
         return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
     return PartitionScore(weight_parts=cfg.weight_parts, weight_compactness=cfg.weight_compactness,
-                          area_weighting=cfg.beam_area_weighting)(list(polys))
+                          area_weighting=cfg.beam_area_weighting, weight_narrow=cfg.weight_narrow,
+                          narrow_width_m=cfg.narrow_width_m)(list(polys))
 
 
 #: The search as in the EG-ICE 2026 paper (apart from the exact cuts and the hole openings):
