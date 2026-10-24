@@ -139,7 +139,7 @@ def test_the_static_build_runs_from_its_own_zip():
     with tempfile.TemporaryDirectory() as tmp:
         out, unpacked = Path(tmp) / "site", Path(tmp) / "explorer"
         subprocess.run([sys.executable, str(ROOT / "tools" / "search_explorer" / "build_static.py"),
-                        "--out", str(out), "--examples", "osm_0023"], check=True, capture_output=True)
+                        "--out", str(out), "--no-report"], check=True, capture_output=True)
         assert (out / "index.html").exists() and (out / "static" / "worker.js").exists()
         assert '"backend": "pyodide"' in (out / "static" / "config.js").read_text()
         zipfile.ZipFile(out / "explorer.zip").extractall(unpacked)
@@ -152,6 +152,24 @@ def test_the_static_build_runs_from_its_own_zip():
         reply = subprocess.run([sys.executable, "-I", "-c", code, str(unpacked)], check=True, capture_output=True, text=True)
         data = json.loads(reply.stdout.strip().splitlines()[-1])
         assert data["example"] == "osm_0023" and data["stats"]["success"]
+
+
+def test_the_demo_examples_are_the_chosen_footprints():
+    core = _explorer_core()
+    import build_static
+
+    demo = json.loads(core.DEMO_EXAMPLES_FILE.read_text(encoding="utf-8"))
+    assert [e["id"] for e in demo["examples"]] == list(build_static.DEMO_EXAMPLES)
+    assert "OpenStreetMap" in demo["attribution"]
+    # Without the local BEM4AI file, the server offers them.
+    saved = dict(core.EXAMPLES)
+    try:
+        core.use_examples(core.DEMO_EXAMPLES_FILE)
+        assert list(core.EXAMPLES) == list(build_static.DEMO_EXAMPLES)
+        assert core.engine()["attribution"] == demo["attribution"]
+    finally:
+        core.use_examples()
+        core.EXAMPLES.update(saved)
 
 
 if __name__ == "__main__":

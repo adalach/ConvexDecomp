@@ -12,8 +12,7 @@ The logic is in `explorer_core.py`, which the static build (`build_static.py`)
 runs in the browser instead. The examples are read from
 ``data/bem4ai/explorer_examples.json`` (local, not in the repository: BEM4AI
 footprints with reference decompositions). Without that file the app offers the
-polygon of the EG-ICE 2026 search-tree figure, ``paper_example.wkt`` next to
-this file.
+demo's footprints, ``demo_examples.json`` next to this file.
 """
 
 from __future__ import annotations

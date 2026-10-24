@@ -5,16 +5,21 @@
 
 The site is the explorer's page with `static/config.js` switched to the browser,
 and `explorer.zip`: exactly the files of this repository the explorer imports
-(found by importing `explorer_core` in a fresh Python) and `examples.json`. The browser loads Pyodide, numpy and shapely from the jsDelivr
-CDN, then runs `explorer_core.py`, the module the server runs. Any static host
-serves the folder as it is; nothing else is needed.
+(found by importing `explorer_core` in a fresh Python) and `examples.json`. The
+browser loads Pyodide, numpy and shapely from the jsDelivr CDN, then runs
+`explorer_core.py`, the module the server runs. Any static host serves the
+folder as it is; `.github/workflows/pages.yml` builds it for GitHub Pages. The
+build itself needs only shapely and numpy.
 
-The examples are footprints of the anonymized OpenStreetMap set this repository
-ships (`data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`, ODbL), chosen
-by hand (`DEMO_EXAMPLES`, or `--examples`) and moved to local coordinates;
-`--local-examples` adds the local BEM4AI examples, which are not in the
-repository. The build prints how long each takes here; in a browser it takes
-about 1.5 times as long.
+The examples are the demo's, `demo_examples.json`: footprints of the anonymized
+OpenStreetMap set this repository ships
+(`data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`, ODbL), chosen by
+hand (`DEMO_EXAMPLES`) and moved to local coordinates. The local server offers
+them too when the BEM4AI examples are missing. `--refresh-demo` writes the file
+again from the footprints (needs geopandas); `--examples` builds with other
+footprints of the set instead, and `--local-examples` adds the local BEM4AI
+examples, which are not in the repository. The build prints how long each
+example takes here; in a browser it takes about 1.5 times as long.
 """
 
 from __future__ import annotations
@@ -57,9 +62,7 @@ def imported_files() -> List[Path]:
 
 
 def osm_examples(sample_ids: Sequence[str]) -> List[Dict[str, Any]]:
-    """The footprints `sample_ids` of the bundled OSM set, in local coordinates, with the time each takes here."""
-    if not sample_ids:
-        return []
+    """The footprints `sample_ids` of the bundled OSM set as examples, in local coordinates (needs geopandas)."""
     sys.path.insert(0, str(HERE))
     import explorer_core as core  # noqa: E402  (puts src/ on sys.path)
     import geopandas as gpd
@@ -82,22 +85,37 @@ def osm_examples(sample_ids: Sequence[str]) -> List[Dict[str, Any]]:
         what = f"{core.T.ENGINE.count_reflex(poly)} reflex corners"
         if poly.interiors:
             what += f", {len(poly.interiors)} courtyard" + ("s" if len(poly.interiors) > 1 else "")
-        example = {"id": sample_id, "label": f"OSM {sample_id} ({poly.area:.0f} m², {what})",
-                   "polygon": core.rings(poly), "references": []}
-        core.EXAMPLES[sample_id] = example
-        t0 = time.perf_counter()
-        run = core.run({"example": sample_id})
-        example["seconds_here"] = round(time.perf_counter() - t0, 2)
-        example["states_here"] = len(run["nodes"])
-        example["decomposed_here"] = run["stats"]["success"]
-        examples.append(example)
+        examples.append({"id": sample_id, "label": f"OSM {sample_id} ({poly.area:.0f} m², {what})",
+                         "polygon": core.rings(poly), "references": []})
     return examples
 
 
-def build(out: Path, sample_ids: Sequence[str], local_examples: bool) -> None:
+def write_demo_examples() -> None:
+    """`demo_examples.json` from `DEMO_EXAMPLES`, one example per line."""
     sys.path.insert(0, str(HERE))
     import explorer_core as core  # noqa: E402
 
+    lines = ",\n".join("  " + json.dumps(e, ensure_ascii=False) for e in osm_examples(DEMO_EXAMPLES))
+    core.DEMO_EXAMPLES_FILE.write_text(
+        f'{{\n "attribution": {json.dumps(OSM_ATTRIBUTION, ensure_ascii=False)},\n "examples": [\n{lines}\n ]\n}}\n',
+        encoding="utf-8")
+    print(f"wrote {core.DEMO_EXAMPLES_FILE.relative_to(REPO_ROOT)}")
+
+
+def report(examples: Sequence[Dict[str, Any]]) -> None:
+    """Each example's label, and how many states its search makes and how long it takes here."""
+    sys.path.insert(0, str(HERE))
+    import explorer_core as core  # noqa: E402
+
+    for e in examples:
+        core.EXAMPLES[e["id"]] = e
+        t0 = time.perf_counter()
+        run = core.run({"example": e["id"]})
+        failed = "" if run["stats"]["success"] else ", no decomposition"
+        print(f"  {e['label']}: {len(run['nodes'])} states, {time.perf_counter() - t0:.2f} s here{failed}")
+
+
+def build(out: Path, examples: Sequence[Dict[str, Any]], attribution: str) -> None:
     if out.exists():
         if any(out.iterdir()) and not (out / "explorer.zip").exists():
             sys.exit(f"{out} exists and is not a build of this script; choose another --out")
@@ -112,35 +130,41 @@ def build(out: Path, sample_ids: Sequence[str], local_examples: bool) -> None:
         "/* Written by build_static.py: the searches run in the browser with Pyodide. */\n"
         f"window.EXPLORER_CONFIG = {json.dumps(config, indent=2)};\n")
 
-    examples = osm_examples(sample_ids)
-    attribution = OSM_ATTRIBUTION if examples else ""
-    if local_examples:
-        examples += json.loads(core.LOCAL_EXAMPLES_FILE.read_text())["examples"]
-        attribution = OSM_ATTRIBUTION
-    files = imported_files() + [core.BUILT_IN_EXAMPLE]  # read when no examples file is found
+    files = imported_files()
     with zipfile.ZipFile(out / "explorer.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for f in files:
             z.write(f, f.relative_to(REPO_ROOT).as_posix())
-        shipped = [{k: v for k, v in e.items() if not k.endswith("_here")} for e in examples]
-        z.writestr("examples.json", json.dumps({"examples": shipped, "attribution": attribution}))
-
+        z.writestr("examples.json", json.dumps({"examples": list(examples), "attribution": attribution}))
     size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
     print(f"{out}: {len(files)} Python files and {len(examples)} examples, {size / 1024:.0f} kB; Pyodide {PYODIDE_VERSION}")
-    for e in examples:
-        here = f": {e['states_here']} states, {e['seconds_here']} s here" if "seconds_here" in e else ""
-        failed = "" if e.get("decomposed_here", True) else ", no decomposition"
-        print(f"  {e['label']}{here}{failed}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "tmp" / "search_explorer_site")
-    parser.add_argument("--examples", default=",".join(DEMO_EXAMPLES),
-                        help="sample ids of the bundled OSM set, comma-separated (default: %(default)s)")
+    parser.add_argument("--refresh-demo", action="store_true",
+                        help=f"write demo_examples.json again from {', '.join(DEMO_EXAMPLES)} (needs geopandas)")
+    parser.add_argument("--examples", help="other sample ids of the bundled OSM set, comma-separated (needs geopandas)")
     parser.add_argument("--local-examples", action="store_true",
                         help="add data/bem4ai/explorer_examples.json (local, not in the repository)")
+    parser.add_argument("--no-report", action="store_true", help="do not run every example to time it")
     args = parser.parse_args()
-    build(args.out.resolve(), [s for s in args.examples.split(",") if s], args.local_examples)
+
+    sys.path.insert(0, str(HERE))
+    import explorer_core as core  # noqa: E402
+
+    if args.refresh_demo:
+        write_demo_examples()
+    if args.examples:
+        examples, attribution = osm_examples([s for s in args.examples.split(",") if s]), OSM_ATTRIBUTION
+    else:
+        demo = json.loads(core.DEMO_EXAMPLES_FILE.read_text(encoding="utf-8"))
+        examples, attribution = demo["examples"], demo["attribution"]
+    if args.local_examples:
+        examples = examples + json.loads(core.LOCAL_EXAMPLES_FILE.read_text())["examples"]
+    build(args.out.resolve(), examples, attribution)
+    if not args.no_report:
+        report(examples)
 
 
 if __name__ == "__main__":

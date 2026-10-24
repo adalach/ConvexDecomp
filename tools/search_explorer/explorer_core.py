@@ -20,14 +20,14 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))  # tools/, for search_trace
 
 import search_trace as T  # noqa: E402  (also puts the repository's src/ on sys.path)
-from shapely import wkt as shapely_wkt  # noqa: E402
 from shapely.geometry import Polygon  # noqa: E402
 from shapely.geometry.polygon import orient  # noqa: E402
 
 from convexdecomp.core.scores import PartitionScore, zone_metrics  # noqa: E402
 
 LOCAL_EXAMPLES_FILE = T.REPO_ROOT / "data" / "bem4ai" / "explorer_examples.json"
-BUILT_IN_EXAMPLE = HERE / "paper_example.wkt"
+# The demo's footprints (anonymized OSM, ODbL), in the repository; written by build_static.py.
+DEMO_EXAMPLES_FILE = HERE / "demo_examples.json"
 # Engine settings the page offers that an older engine may not have yet.
 OPTIONAL_SETTINGS = ("bisector_always", "min_corner_deg", "min_zone_width_m", "beam_area_weighting")
 
@@ -55,38 +55,32 @@ def polygon(r: Dict[str, Any]) -> Polygon:
     return orient(Polygon(r["exterior"], r["holes"]), 1.0)
 
 
-def paper_example() -> Dict[str, Any]:
-    paper = shapely_wkt.loads(BUILT_IN_EXAMPLE.read_text())
-    return {"id": "paper_example", "label": "EG-ICE 2026 figure polygon (39.9 m², 1 hole)",
-            "polygon": rings(paper), "references": []}
-
-
 #: The examples by id. `use_examples` replaces the contents, so the dictionary itself never changes.
 EXAMPLES: Dict[str, Dict[str, Any]] = {}
 #: Where the examples came from, and the credit they need (shown on the page).
-SOURCE: Dict[str, str] = {"examples": "built-in", "attribution": ""}
+SOURCE: Dict[str, str] = {"examples": "none", "attribution": ""}
 
 
 def use_examples(path: Optional[Path] = None) -> None:
-    """Load the examples from `path`, else the local BEM4AI file, else the built-in paper polygon.
+    """Load the examples from `path`; without one, from the local BEM4AI file, else the demo's.
 
     A file holds ``{"examples": [...], "attribution": "..."}``; each example has an
     ``id``, a ``label``, a ``polygon`` (``exterior`` and ``holes``) and ``references``.
+    When no file exists, there are no examples.
     """
-    path = Path(path) if path is not None else LOCAL_EXAMPLES_FILE
-    if path.exists():
-        data = json.loads(path.read_text())
-        examples = data["examples"]
-        try:
-            source = str(path.relative_to(T.REPO_ROOT))
-        except ValueError:
-            source = path.name
-        SOURCE.update(examples=source, attribution=data.get("attribution", ""))
-    else:
-        examples = [paper_example()]
-        SOURCE.update(examples="built-in", attribution="")
+    candidates = [Path(path)] if path is not None else [LOCAL_EXAMPLES_FILE, DEMO_EXAMPLES_FILE]
+    found = next((p for p in candidates if p.exists()), None)
     EXAMPLES.clear()
-    EXAMPLES.update((e["id"], e) for e in examples)
+    if found is None:
+        SOURCE.update(examples="none", attribution="")
+        return
+    data = json.loads(found.read_text())
+    try:
+        source = str(found.relative_to(T.REPO_ROOT))
+    except ValueError:
+        source = found.name
+    SOURCE.update(examples=source, attribution=data.get("attribution", ""))
+    EXAMPLES.update((e["id"], e) for e in data["examples"])
 
 
 use_examples()

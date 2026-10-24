@@ -48,6 +48,20 @@ Use `--no-overwrite-existing` if you want the converter to refuse replacing an e
 
 The notebook bootstrap locates the project root from `pyproject.toml`, `notebooks/`, and `src/convexdecomp/`, so extracted archive copies work without git metadata.
 
+## Search Explorer
+
+The search explorer runs the bounded beam search on one footprint, with the score and the search budget on sliders, and draws every state the search made as a tree next to the variants it found, ranked by the current score.
+
+- **In the browser, nothing to install:** [adalach.github.io/ConvexDecomp](https://adalach.github.io/ConvexDecomp/). The page runs this repository's engine with Pyodide (Python compiled to WebAssembly) on six footprints of the bundled OSM set; the first visit downloads about 16 MB, and the search budget is capped.
+- **Locally, with the full budget:** after the Quickstart, start the server and open http://localhost:8765:
+
+```bash
+pip install fastapi uvicorn
+python -m uvicorn app:app --app-dir tools/search_explorer --port 8765
+```
+
+`python tools/search_explorer/build_static.py` builds the browser version into `tmp/search_explorer_site`; `.github/workflows/pages.yml` publishes it on every push to `main` that changes the engine or the explorer. See `tools/search_explorer/README.md`.
+
 ## Data Contract
 
 The OSM case-study input is included directly. The ResPlan raw dataset is fetched on demand from the upstream public repository, but the public workflow now uses only local `ConvexDecomp` helper code.
@@ -97,7 +111,7 @@ ConvexDecomp/
 - `config/checks.json`: the footprint checks and their thresholds, in the layout of BEM4AI's `config/checks.json`; the footprint checks the two pipelines share are the same entries.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
-- `tools/`: the search tracer, the search-tree figure (EG-ICE 2026 style) and the search explorer web app, which record and show every state the search makes; see `tools/README.md`.
+- `tools/`: the search tracer, the search-tree figure (EG-ICE 2026 style) and the search explorer web app, which record and show every state the search makes, with the explorer's static build for GitHub Pages; see `tools/README.md`.
 - `external/resplan/`: created locally on first ResPlan run as a dataset source clone; not shipped in the public repo zip.
 
 ## Exact Cuts

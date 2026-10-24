@@ -75,8 +75,8 @@ python -m http.server 8766 --directory tmp/search_explorer_site
 
 `data/bem4ai/` (local, ignored by git) holds the polygons BEM4AI notebook 4 decomposes,
 `decomposition_inputs.gpkg`, and the explorer's examples, `explorer_examples.json`. The figure
-tool reads the first with `--sample-id`; the explorer falls back to a built-in polygon when the
-second is missing.
+tool reads the first with `--sample-id`; the explorer offers the demo's footprints
+(`search_explorer/demo_examples.json`) when the second is missing.
 
 ## Tests
 

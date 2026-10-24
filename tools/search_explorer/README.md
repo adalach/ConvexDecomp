@@ -24,12 +24,14 @@ app imports `convexdecomp` from this repository's `src/`.
 | `app.py` | FastAPI server around it: `/api/examples`, `/api/engine` (which optional settings the engine has), `/api/run`. |
 | `static/` | The page: `index.html`, `app.js` (d3 7.8.5 from cdnjs), `style.css`, `config.js` (where the searches run: the server), `worker.js` (the same searches in the browser). |
 | `build_static.py` | The static build: the page with the searches run in the browser by Pyodide. |
-| `paper_example.wkt` | The polygon of the EG-ICE 2026 search-tree figure, offered when the BEM4AI examples are missing. |
+| `demo_examples.json` | The demo's footprints, written by `build_static.py --refresh-demo`; the server offers them too when the BEM4AI examples are missing. |
 
 ## Static build
 
 The explorer also runs without a server: Pyodide (Python compiled to WebAssembly) runs
-`explorer_core.py` in a web worker, so any static host can serve it.
+`explorer_core.py` in a web worker, so any static host can serve it. On every push to `main` that
+changes the engine or the explorer, `.github/workflows/pages.yml` builds it and publishes it with
+GitHub Pages, once Pages is set to deploy from GitHub Actions.
 
 ```bash
 python tools/search_explorer/build_static.py          # writes tmp/search_explorer_site
@@ -43,16 +45,18 @@ a fresh Python, and `examples.json`. The browser loads Pyodide 314.0.7 (Python
 browser's cache afterwards; starting the worker then takes about 2 s. A search gives the same tree and
 scores as on the server and takes about 1.5 times as long.
 
-- **Examples:** six footprints of the anonymized OSM set the repository ships
-  (`data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`), chosen by hand (`DEMO_EXAMPLES`, or
-  `--examples`), in local coordinates and as mapped (the OSM adapter has not prepared them): from 3 to
-  6 reflex corners, a courtyard, and a courtyard building, osm_0975, whose search makes some 2,000
-  states in about 6 s in the browser. The page credits OpenStreetMap. `--local-examples` adds the
-  local BEM4AI examples.
+- **Examples:** `demo_examples.json`, six footprints of the anonymized OSM set the repository ships
+  (`data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`), chosen by hand (`DEMO_EXAMPLES` in
+  `build_static.py`), in local coordinates and as mapped (the OSM adapter has not prepared them): from
+  3 to 6 reflex corners, a courtyard, and a courtyard building, osm_0975, whose search makes some
+  2,000 states in about 6 s in the browser. The page credits OpenStreetMap. `--refresh-demo` writes
+  the file again from the footprints, `--examples` builds with other footprints of the set (both need
+  geopandas), and `--local-examples` adds the local BEM4AI examples. The build needs shapely and numpy
+  only, and prints how many states each example's search makes and how long it takes.
 - **Budget:** capped in the browser (starting and largest beam width 8, depth 30, 16 reflex vertices per piece, 64 variants,
   1,000 dead ends); a search still running after 60 s is stopped and the worker started again. One
   search runs at a time; of the searches asked for meanwhile, only the newest waits.
 
 The examples come from `data/bem4ai/explorer_examples.json`: BEM4AI footprints with reference
 decompositions (old engine, hand-made mixes, best of all hole openings). That file is local
-and ignored by git; without it the app offers only `paper_example.wkt`.
+and ignored by git; without it the app offers the demo's footprints, `demo_examples.json`.
