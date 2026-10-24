@@ -133,7 +133,7 @@ def test_the_static_build_runs_from_its_own_zip():
     with tempfile.TemporaryDirectory() as tmp:
         out, unpacked = Path(tmp) / "site", Path(tmp) / "explorer"
         subprocess.run([sys.executable, str(ROOT / "tools" / "search_explorer" / "build_static.py"),
-                        "--out", str(out), "--osm-examples", "0"], check=True, capture_output=True)
+                        "--out", str(out), "--examples", "osm_0023"], check=True, capture_output=True)
         assert (out / "index.html").exists() and (out / "static" / "worker.js").exists()
         assert '"backend": "pyodide"' in (out / "static" / "config.js").read_text()
         zipfile.ZipFile(out / "explorer.zip").extractall(unpacked)
@@ -142,10 +142,10 @@ def test_the_static_build_runs_from_its_own_zip():
                 "sys.path.insert(0, sys.argv[1] + '/tools/search_explorer')\n"
                 "import explorer_core as core\n"
                 "core.use_examples(sys.argv[1] + '/examples.json')\n"
-                "print(core.call_json('run', json.dumps({'example': 'paper_example', 'search': {'max_failed': 20}}), '{}'))\n")
+                "print(core.call_json('run', json.dumps({'example': 'osm_0023'}), '{}'))\n")
         reply = subprocess.run([sys.executable, "-I", "-c", code, str(unpacked)], check=True, capture_output=True, text=True)
         data = json.loads(reply.stdout.strip().splitlines()[-1])
-        assert data["example"] == "paper_example" and data["nodes"]
+        assert data["example"] == "osm_0023" and data["stats"]["success"]
 
 
 if __name__ == "__main__":
