@@ -43,6 +43,7 @@ LAYER_TITLES = {
 NUMBERS = (
     ("corners", "Corners", None),
     ("wing_end_corners", "Wing-end corners without rays", None),
+    ("wing_ends_restored", "Wing-end corners given their rays back", None),
     ("zones", "Perimeter zones", None),
     ("core_parts", "Core parts", None),
     ("core_share_pct", "Core share of the floor area", "%"),
@@ -63,6 +64,8 @@ NUMBERS = (
     ("tiny_merged", "Rule 7: groups of tiny zones merged", None),
     ("lone_merged", "Rule 8: lone tiny zones merged", None),
     ("sharp_cuts", "Rule 9: sharp corners cut", None),
+    ("sharp_whole", "Rule 9: sharp triangles handed over whole", None),
+    ("specks_joined", "Rule 10: specks joined to a neighbour", None),
 )
 
 

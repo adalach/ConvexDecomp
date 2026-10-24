@@ -82,10 +82,41 @@ def shares_edge(a: Polygon, b: Polygon) -> bool:
     return shapely.intersection(a.boundary, b.boundary).length > 1e-6
 
 
-def zone_across(zones: list[tuple[Polygon, str]], i: int, edge: LineString) -> tuple[float, int | None]:
-    """(shared length, index) of the zone other than zone i that shares most of the edge."""
-    return max(((shapely.intersection(zones[j][0].boundary, edge).length, j) for j in range(len(zones)) if j != i),
+def shared_length(boundary, edge, tol: float = 0.0) -> float:
+    """How much of boundary runs along edge: exactly, or within tol of it (edges that agree only to rounding, or
+    where one of them carries an extra point the other does not)."""
+    if tol <= 0.0:
+        return shapely.intersection(boundary, edge).length
+    return shapely.intersection(boundary, edge.buffer(tol, cap_style="flat")).length
+
+
+def zone_across(zones: list[tuple[Polygon, str]], i: int, edge: LineString,
+                tol: float = 0.0) -> tuple[float, int | None]:
+    """(shared length, index) of the zone other than zone i that shares most of the edge (within tol)."""
+    return max(((shared_length(zones[j][0].boundary, edge, tol), j) for j in range(len(zones)) if j != i),
                default=(0.0, None))
+
+
+def insert_point(z: Polygon, p: np.ndarray, tol: float = 1e-7) -> Polygon:
+    """z with p inserted into the edges of its rings that p lies on (within tol) and does not end."""
+    def node(c: np.ndarray) -> np.ndarray:
+        out = []
+        for a, b in zip(c[:-1], c[1:]):
+            out.append(a)
+            ab = b - a
+            L2 = ab @ ab
+            if L2 > 0:
+                t = (p - a) @ ab / L2
+                if 1e-9 < t < 1 - 1e-9 and np.linalg.norm(a + t * ab - p) < tol \
+                        and min(np.linalg.norm(p - a), np.linalg.norm(p - b)) > 1e-9:
+                    out.append(np.asarray(p, dtype=float))
+        out.append(c[-1])
+        return np.asarray(out)
+
+    if z.distance(Point(p)) > tol:
+        return z
+    rings = [node(np.asarray(r.coords)) for r in [z.exterior, *z.interiors]]
+    return Polygon(rings[0], rings[1:])
 
 
 def clean_ring(c: np.ndarray) -> np.ndarray:

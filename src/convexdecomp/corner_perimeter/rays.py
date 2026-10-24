@@ -93,13 +93,13 @@ def to_band(rays: list[LineString], band_line) -> tuple[list[LineString], list[b
     return out, hit
 
 
-def wing_end_corners(cs, cfg: CornerRayConfig) -> set[int]:
-    """The corners (indices into cs) that cast no ray: the two convex corners of an end wall shorter than
-    ``wing_end_max_m`` whose side walls are parallel within ``wing_end_parallel_deg`` (the two corner angles add up
-    to 180° within it), and, with ``wing_end_long_sides``, at least as long as the end wall."""
-    skip: set[int] = set()
+def wing_end_pairs(cs, cfg: CornerRayConfig) -> list[tuple[int, int, int, int]]:
+    """The wing ends, as (h, k, m, n) indices into cs: k-m is an end wall shorter than ``wing_end_max_m`` between
+    two convex corners, whose side walls h-k and m-n are parallel within ``wing_end_parallel_deg`` (the two corner
+    angles add up to 180° within it) and, with ``wing_end_long_sides``, at least as long as the end wall."""
+    out: list[tuple[int, int, int, int]] = []
     if cfg.wing_end_max_m <= 0:
-        return skip
+        return out
     for r in {c[3] for c in cs}:
         ks = [k for k, c in enumerate(cs) if c[3] == r]
         for j, k in enumerate(ks):
@@ -112,8 +112,13 @@ def wing_end_corners(cs, cfg: CornerRayConfig) -> set[int]:
             if cfg.wing_end_long_sides and min(np.linalg.norm(cs[k][0] - cs[h][0]),
                                                np.linalg.norm(cs[n][0] - cs[m][0])) < end:  # a step, not a wing
                 continue
-            skip |= {k, m}
-    return skip
+            out.append((h, k, m, n))
+    return out
+
+
+def wing_end_corners(cs, cfg: CornerRayConfig) -> set[int]:
+    """The corners (indices into cs) that cast no ray: the two corners of every wing end (:func:`wing_end_pairs`)."""
+    return {i for _, k, m, _ in wing_end_pairs(cs, cfg) for i in (k, m)}
 
 
 def close_pairs(poly: Polygon, cs, rays: list[LineString], cfg: CornerRayConfig):

@@ -16,8 +16,8 @@ from shapely.ops import polygonize
 
 from convexdecomp.core.scores import minimum_width
 
-from .geometry import (EPS, Line, clean_ring, convex_corners, is_convex, kind_of, one_polygon, outline_corners,
-                       polygons, shares_edge, unit, zone_across)
+from .geometry import (EPS, Line, clean_ring, convex_corners, insert_point, is_convex, kind_of, one_polygon,
+                       outline_corners, polygons, shared_length, shares_edge, unit, zone_across)
 from .settings import CornerRayConfig
 
 
@@ -226,7 +226,10 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
     """Rule 7: zones thinner than 2 m that share an edge become one zone. A merged zone that is not
     convex takes the rest of its convex hull from the zones around it, if the hull stays inside the
     footprint and every zone giving area stays one polygon and, if it was convex, convex. Groups
-    whose merged zone cannot be made convex stay as they are. Returns the zones and the merged zones."""
+    whose merged zone cannot be made convex stay as they are. With ``hull_keeps_width``, every zone giving area
+    must also stay at least the zone width wide (a core part the narrowest core; a zone already thinner, as wide
+    as it was); where one would not, the group merges without its hull and is not convex, for the convex
+    decomposition to cut. Returns the zones and the merged zones."""
     zones = list(zones)
 
     def touching_thin_groups() -> list[list[int]]:
@@ -259,7 +262,7 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
             if hull.difference(poly).area > 1e-6:
                 continue  # the hull reaches outside the footprint
             extra = hull.difference(union)
-            ok = True
+            ok, too_thin = True, False
             for j, (z, k) in enumerate(zones):
                 if j in members or shapely.intersection(z, extra).area <= 1e-6:
                     continue
@@ -267,10 +270,17 @@ def merge_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: Corne
                 if rest is None or not rest.is_valid or (is_convex(z) and not is_convex(rest)):
                     ok = False
                     break
+                limit = cfg.narrow_core_m if k == "core" else cfg.min_zone_width_m
+                if cfg.hull_keeps_width and minimum_width(rest) < min(limit, minimum_width(z)) - 1e-9:
+                    too_thin = True  # the hull would leave this zone too thin: merge without the hull
+                    break
                 changes[j] = rest
             if not ok:
                 continue
-            new = hull
+            if too_thin:
+                changes = {}
+            else:
+                new = hull
         for j, rest in changes.items():
             zones[j] = (rest, kind_of(rest, zones[j][1], cfg.min_zone_width_m))
         zones = [zk for i, zk in enumerate(zones) if i not in members] + [(new, kind_of(new, "zone", cfg.min_zone_width_m))]
@@ -362,14 +372,32 @@ def absorb_lone_tiny_zones(poly: Polygon, zones: list[tuple[Polygon, str]], cfg:
         merged.append((u, relinked))
 
 
+#: rule 9 and rule 10 find the zone across an edge within this distance: edges that agree only to rounding, or
+#: where one carries a point the other does not, still count as shared
+ACROSS_TOL = 1e-6
+
+
+def taker_across(zones: list[tuple[Polygon, str]], i: int, edge: LineString) -> int | None:
+    """Rule 9: the zone that takes a tip across edge: of the zones lying along it (within ``ACROSS_TOL``), the one
+    along most of it; None when zones lie along less than half of it (the rest is outline)."""
+    shares = [(shared_length(zones[j][0].boundary, edge, ACROSS_TOL), j) for j in range(len(zones)) if j != i]
+    if sum(s for s, _ in shares) < 0.5 * edge.length:
+        return None
+    return max(shares)[1]
+
+
 def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
     """Rule 9: a zone corner A sharper than ``sharp_corner_deg`` is cut off along BP, from the far end B of the
     shorter edge AB straight across to the longer edge AC (P, the foot of the perpendicular).
-    The zone across AB takes the tip ABP; the cut zone keeps the rest (A moves to P).
-    Skipped when no zone lies across AB (it is on the outline) or the result would be invalid.
-    Returns the zones and the cuts."""
+    The zone across AB takes the tip ABP, or, when AB lies on the outline, the zone across AP; the cut zone keeps
+    the rest (A moves to P), and P is inserted into the zones whose edges it lies on, so the zones stay noded. The
+    zone across an edge is found within ``ACROSS_TOL``. A triangle whose rest would again have a corner sharper than
+    the limit (its third corner is over 90° minus the limit, or under the limit) goes whole to the zone taking the
+    tip: cut, it would leave a similar triangle, cut again and again down to a point. Skipped when no zone lies
+    across either edge or the result would be invalid. Returns the zones, the cuts and the zones handed over whole."""
     zones = list(zones)
     cuts: list[LineString] = []
+    whole: list[Polygon] = []
     tried: set[tuple] = set()
     while True:  # the sharpest corner first
         sharp = []
@@ -380,18 +408,28 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
                 if angle < cfg.sharp_corner_deg and key not in tried:
                     sharp.append((angle, i, t, c, key))
         if not sharp:
-            return zones, cuts
+            return zones, cuts, whole
         _, i, t, c, key = min(sharp, key=lambda s_: s_[0])
         tried.add(key)
         a, x, y = c[t], c[t - 1], c[(t + 1) % len(c)]
         b, far = (x, y) if np.linalg.norm(x - a) <= np.linalg.norm(y - a) else (y, x)
         w = unit(far - a)
         p = a + ((b - a) @ w) * w
-        ab = LineString([a, b])
-        share, j = zone_across(zones, i, ab)
-        if j is None or share < 0.5 * ab.length:
-            continue  # the shorter edge is on the outline: nobody to take the tip
+        j = taker_across(zones, i, LineString([a, b]))
+        if j is None:  # the shorter edge is on the outline: the zone across the longer edge takes the tip
+            j = taker_across(zones, i, LineString([a, p]))
+            if j is None:
+                continue  # nobody to take the tip
         rest = Polygon(np.vstack([c[:t], [p], c[t + 1:]]), [h.coords for h in zones[i][0].interiors])
+        if len(c) == 3 and not zones[i][0].interiors and any(angle < cfg.sharp_corner_deg
+                                                               for angle, _ in convex_corners(rest)[1]):
+            taker = one_polygon(shapely.union_all([zones[j][0], zones[i][0]]))
+            if taker is None or not taker.is_valid:
+                continue
+            zones[j] = (taker, kind_of(taker, zones[j][1], cfg.min_zone_width_m))
+            whole.append(zones[i][0])
+            del zones[i]
+            continue
         taker = shapely.union_all([zones[j][0], Polygon([a, b, p])])
         if not rest.is_valid or rest.area <= 0 or taker.geom_type != "Polygon" or not taker.is_valid:
             continue
@@ -399,7 +437,43 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
             continue  # the zone taking the tip would lose its convexity
         zones[i] = (rest, kind_of(rest, zones[i][1], cfg.min_zone_width_m))
         zones[j] = (taker, kind_of(taker, zones[j][1], cfg.min_zone_width_m))
+        for k, (z, kind) in enumerate(zones):  # P lies on the edge AC of the zone across it: insert it there
+            if k not in (i, j):
+                zones[k] = (insert_point(z, p), kind)
         cuts.append(LineString([b, p]))
+
+
+def join_specks(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
+    """Rule 10, smallest first: a perimeter zone under ``speck_m2`` joins the neighbour it shares the longest edge
+    with (a perimeter zone if it has one, else the core), even if the union is not convex: the convex decomposition
+    cuts that later. A zone without area (under 1e-6 m²) is dropped. Returns the zones and the joined zones."""
+    zones = list(zones)
+    joined: list[Polygon] = []
+    skipped: set[bytes] = set()
+    while True:
+        specks = sorted((i for i, (z, k) in enumerate(zones) if k != "core" and z.area < cfg.speck_m2
+                         and z.wkb not in skipped), key=lambda i: zones[i][0].area)
+        if not specks:
+            return zones, joined
+        i = specks[0]
+        z = zones[i][0]
+        if z.area < 1e-6:
+            del zones[i]
+            continue
+        near = sorted(((zones[j][1] == "core", -shared_length(z.boundary, n.boundary, ACROSS_TOL), j)
+                       for j, (n, _) in enumerate(zones) if j != i))
+        for _, minus_share, j in near:
+            if -minus_share <= 1e-6:
+                continue
+            u = one_polygon(shapely.union_all([zones[j][0], z]))
+            if u is None or not u.is_valid:
+                continue
+            zones[j] = (u, kind_of(u, zones[j][1], cfg.min_zone_width_m))
+            del zones[i]
+            joined.append(u)
+            break
+        else:
+            skipped.add(z.wkb)
 
 
 def sharp_corners(zones: list[tuple[Polygon, str]], deg: float = 20.0) -> int:

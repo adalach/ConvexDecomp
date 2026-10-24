@@ -18,7 +18,8 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "ray along the bisector of its corner, cut off at the band line and stopped by the first ray it reaches."),
     ("wing_ends", "Wing ends",
      "The two corners of a wing's end wall cast no ray when the wing is too narrow for two zones side by side; the "
-     "wing's zones then reach from one side to the other."),
+     "wing's zones then reach from one side to the other. A wing end that leaves a thin zone is tried with its "
+     "rays."),
     ("rays", "Rays that meet",
      "Rule 1: rays that meet merge into one ray, which goes on in the middle. Rule 2: two rays running in opposite "
      "directions close to each other's corners become one line from corner to corner. Rule 3: a ray from a convex "
@@ -31,7 +32,8 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "a narrow four-cornered zone gives way to its shorter diagonal."),
     ("tiny", "Tiny zones and sharp corners",
      "Rule 7: zones thinner than the zone width that touch become one convex zone. Rule 8: a lone thin zone merges "
-     "into a neighbour, after relinking one of its edges if needed. Rule 9: very sharp zone corners are cut off."),
+     "into a neighbour, after relinking one of its edges if needed. Rule 9: very sharp zone corners are cut off. "
+     "Rule 10: specks join a neighbour. Rules 9, 7, 8 and 10 repeat until nothing changes."),
 )
 
 
@@ -45,7 +47,9 @@ def setting(default: Any, *, section: str, title: str, help: str, unit: str | No
 
 @dataclass(frozen=True)
 class CornerRayConfig:
-    """Every threshold of the corner-ray perimeter. The defaults are the settings chosen on 2026-10-20."""
+    """Every threshold of the corner-ray perimeter. The defaults are the settings chosen on 2026-10-20, with the
+    narrowest core raised from 1 m to 1.2 m on 2026-10-23 and the fixes of that day switched on (the wing-end
+    check, rule 7's width check, rule 10 and the repeat until nothing changes)."""
 
     # band and rays
     band_m: float = setting(
@@ -76,6 +80,10 @@ class CornerRayConfig:
     wing_end_long_sides: bool = setting(
         False, section="wing_ends", title="Only long wings", advanced=True,
         help="Also require both side walls to be at least as long as the end wall (a wing, not a step).")
+    wing_end_check: bool = setting(
+        True, section="wing_ends", title="Check each wing end",
+        help="A wing end whose wing touches a zone thinner than the zone width is tried again with its rays; the "
+             "result with fewer thin, non-convex and sharp zones and specks is kept.")
 
     # rays that meet (rules 1 to 3)
     opposite_gap_m: float = setting(
@@ -111,7 +119,7 @@ class CornerRayConfig:
         1.0, section="narrow_core", title="Notch passage", unit="m", ge=0.0, le=5.0, lo=0.0, hi=3.0, step=0.05,
         needs="fill_notches", help="A notch is filled where the core across its floor is thinner than this.")
     narrow_core_m: float = setting(
-        1.0, section="narrow_core", title="Narrowest core", unit="m", ge=0.0, le=5.0, lo=0.0, hi=3.0, step=0.05,
+        1.2, section="narrow_core", title="Narrowest core", unit="m", ge=0.0, le=5.0, lo=0.0, hi=3.0, step=0.05,
         help="Core thinner than this becomes a line: whole parts (with the switch below), tapered tips and "
              "passages between wider parts.")
     collapse_narrow_parts: bool = setting(
@@ -156,6 +164,21 @@ class CornerRayConfig:
     repeat_tiny_after_sharp: bool = setting(
         True, section="tiny", title="Merge tiny zones again", advanced=True,
         help="Rules 7 and 8 run once more after rule 9, for thin zones its cuts leave.")
+    hull_keeps_width: bool = setting(
+        True, section="tiny", title="Hull keeps its neighbours wide",
+        help="Rule 7: a zone giving area to the convex hull of merged thin zones must stay at least the zone width "
+             "wide (a core part the narrowest core). Where one would not, the thin zones merge without the hull, "
+             "into a zone that is not convex.")
+    join_specks: bool = setting(
+        True, section="tiny", title="Specks join a neighbour",
+        help="Rule 10: a perimeter zone smaller than the speck area joins the neighbour it shares the longest edge "
+             "with, even if the union is not convex; a zone without area is dropped.")
+    speck_m2: float = setting(
+        0.5, section="tiny", title="Speck", unit="m²", ge=0.0, le=10.0, lo=0.0, hi=2.0, step=0.05,
+        needs="join_specks", help="Rule 10: a perimeter zone smaller than this is a speck.")
+    repeat_until_stable: bool = setting(
+        True, section="tiny", title="Repeat until nothing changes", advanced=True,
+        help="Rules 9, 7, 8 and 10 run again, in turn, until the zones no longer change (at most 8 rounds).")
 
     def __post_init__(self) -> None:
         for f in fields(self):

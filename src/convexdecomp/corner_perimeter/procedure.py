@@ -1,4 +1,4 @@
-"""The corner-ray perimeter of one footprint: the band, the corner rays, rules 1 to 9, and the zones.
+"""The corner-ray perimeter of one footprint: the band, the corner rays, rules 1 to 10, and the zones.
 
 :func:`corner_ray_perimeter` runs the whole procedure, or stops after one of :data:`STAGES`, and returns a
 :class:`PerimeterResult` with the zones and every intermediate line and record that the figures and previews draw.
@@ -12,19 +12,19 @@ from typing import Any
 
 import numpy as np
 import shapely
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString, MultiPoint, Point, Polygon
 from shapely.ops import substring
 
 from .core import align_legs, fill_notches, narrow_tips, refit, run_on_spines
 from .geometry import EPS, Line, cut_at, first_hit, heading_of, reach, unit
-from .rays import cast, close_pairs, corners, reattach, to_band, trim, wing_end_corners
+from .rays import cast, close_pairs, corners, reattach, to_band, trim, wing_end_pairs
 from .settings import CornerRayConfig
-from .zones import (PerimeterError, absorb_lone_tiny_zones, cut_sharp_corners, merge_tiny_zones, merge_vertex_groups,
-                    node_lines, split_narrow, zone_counts, zones_from)
+from .zones import (PerimeterError, absorb_lone_tiny_zones, cut_sharp_corners, join_specks, merge_tiny_zones,
+                    merge_vertex_groups, node_lines, split_narrow, zone_counts, zones_from)
 
 #: the stages in the order they run; ``upto`` stops after one of them
 STAGES = ("band", "rays", "merge_rays", "opposite", "discard", "narrow_core", "close_points", "diagonals",
-          "corner_groups", "tiny_touching", "tiny_lone", "sharp")
+          "corner_groups", "tiny_touching", "tiny_lone", "sharp", "specks")
 #: what each stage is, in words
 STAGE_TITLES = {
     "band": "Band", "rays": "Corner rays (wing ends without)", "merge_rays": "Rule 1: rays that meet merge",
@@ -32,8 +32,12 @@ STAGE_TITLES = {
     "narrow_core": "Rule 4: narrow core becomes lines", "close_points": "Rule 5: close points become one",
     "diagonals": "Rule 6: narrow zones give way to a diagonal", "corner_groups": "Rule 5 again, longer reach",
     "tiny_touching": "Rule 7: touching tiny zones merge", "tiny_lone": "Rule 8: lone tiny zones merge",
-    "sharp": "Rule 9: sharp corners are cut off",
+    "sharp": "Rule 9: sharp corners are cut off", "specks": "Rule 10: specks join a neighbour",
 }
+#: rules 9, 7, 8 and 10 repeat at most this often (``repeat_until_stable``)
+MAX_ROUNDS = 8
+#: what the wing-end check counts as bad: thin, non-convex and sharp zones and specks
+BAD = ("thin", "not_convex", "sharp_20", "specks")
 
 
 @dataclass
@@ -68,6 +72,10 @@ class PerimeterResult:
     tiny_merged: list[Polygon] = field(default_factory=list)       # rule 7
     lone_merged: list[tuple[Polygon, bool]] = field(default_factory=list)  # rule 8: (zone, after a relink)
     sharp_cuts: list[LineString] = field(default_factory=list)     # rule 9
+    sharp_whole: list[Polygon] = field(default_factory=list)       # rule 9: triangles handed over whole
+    specks_joined: list[Polygon] = field(default_factory=list)     # rule 10: the zones specks joined
+    wing_ends_restored: list[np.ndarray] = field(default_factory=list)  # wing-end check: corners given rays back
+    rounds: int = 0                                                # rounds of rules 9, 7, 8 and 10
     upto: str | None = None
 
     @property
@@ -96,13 +104,19 @@ class PerimeterResult:
                 "points_merged": len(self.points_merged), "diagonals": len(self.diagonals),
                 "corner_groups": len(self.corner_groups), "tiny_merged": len(self.tiny_merged),
                 "lone_merged": len(self.lone_merged), "lone_relinked": sum(r for _, r in self.lone_merged),
-                "sharp_cuts": len(self.sharp_cuts)}
+                "sharp_cuts": len(self.sharp_cuts), "sharp_whole": len(self.sharp_whole),
+                "specks_joined": len(self.specks_joined), "wing_ends_restored": len(self.wing_ends_restored)}
 
 
 def corner_ray_perimeter(poly: Polygon, config: CornerRayConfig | None = None, upto: str | None = None,
                          skip: tuple[str, ...] = ()) -> PerimeterResult:
     """The perimeter zones and core of a footprint (a valid polygon in metres, courtyards allowed), or the state
     after the stage ``upto`` (one of :data:`STAGES`), without the stages in ``skip``.
+
+    With ``wing_end_check``, every wing end whose wing (the hull of its end wall and side walls) touches a thin
+    zone of the whole procedure's result is tried again with its rays, one after another; a try is kept when the
+    footprint's thin, non-convex and sharp zones and specks (:data:`BAD`) go down. A stage ``upto`` is then drawn
+    with the wing ends the whole procedure kept.
 
     Raises :class:`~.zones.PerimeterError` if the zones would not tile the footprint (never seen on the 990
     footprints of the test sample)."""
@@ -112,14 +126,38 @@ def corner_ray_perimeter(poly: Polygon, config: CornerRayConfig | None = None, u
     unknown = set(skip) - set(STAGES)
     if unknown:
         raise ValueError(f"unknown stages to skip: {', '.join(sorted(unknown))}")
+    cs = corners(poly, cfg.min_turn_deg)
+    pairs = wing_end_pairs(cs, cfg)
+    skip_corners = {i for _, k, m, _ in pairs for i in (k, m)}
+    if not (cfg.wing_end_check and pairs):
+        return _perimeter(poly, cfg, upto, skip, cs, skip_corners, [])
+
+    def bad(r: PerimeterResult) -> int:
+        c = zone_counts(r.zones)
+        return sum(c[k] for k in BAD)
+
+    result = _perimeter(poly, cfg, None, skip, cs, skip_corners, [])
+    restored: list[int] = []
+    for h, k, m, n in pairs:
+        wing = MultiPoint([cs[i][0] for i in (h, k, m, n)]).convex_hull.buffer(0.1)
+        if not any(kind == "thin" and z.intersects(wing) for z, kind in result.zones):
+            continue
+        trial = _perimeter(poly, cfg, None, skip, cs, skip_corners - {k, m}, restored + [k, m])
+        if bad(trial) < bad(result):
+            result, skip_corners, restored = trial, skip_corners - {k, m}, restored + [k, m]
+    return result if upto is None else _perimeter(poly, cfg, upto, skip, cs, skip_corners, restored)
+
+
+def _perimeter(poly: Polygon, cfg: CornerRayConfig, upto: str | None, skip: tuple[str, ...], cs: list,
+               skip_corners: set[int], restored: list[int]) -> PerimeterResult:
+    """The procedure with the corners skip_corners (indices into the corners cs) casting no ray."""
 
     def on(stage: str) -> bool:
         return stage not in skip and (upto is None or STAGES.index(stage) <= STAGES.index(upto))
 
     # the corners that cast rays: all but the two corners of a narrow wing's end wall
-    cs = corners(poly, cfg.min_turn_deg)
-    skip_corners = wing_end_corners(cs, cfg)
     wing_ends = [cs[k][0] for k in sorted(skip_corners)]
+    wing_ends_restored = [cs[k][0] for k in restored]
     cs = [c for k, c in enumerate(cs) if k not in skip_corners]
     # the perimeter band: the footprint offset inwards, its inner boundary is the band line
     core0 = poly.buffer(-cfg.band_m, join_style="mitre", mitre_limit=10.0)
@@ -262,17 +300,35 @@ def corner_ray_perimeter(poly: Polygon, config: CornerRayConfig | None = None, u
     zones, tiny_merged = merge_tiny_zones(poly, zones, cfg) if on("tiny_touching") else (zones, [])
     # rule 8: a lone tiny zone merges into a neighbour, after a relink if needed
     zones, lone_merged = absorb_lone_tiny_zones(poly, zones, cfg) if on("tiny_lone") else (zones, [])
-    # rule 9: very sharp zone corners are cut off; then rules 7 and 8 once more
-    zones, sharp_cuts = cut_sharp_corners(zones, cfg) if on("sharp") else (zones, [])
-    if cfg.repeat_tiny_after_sharp and on("sharp"):
-        zones, more = merge_tiny_zones(poly, zones, cfg)
-        tiny_merged += more
-        zones, more = absorb_lone_tiny_zones(poly, zones, cfg)
-        lone_merged += more
+    # rule 9: very sharp zone corners are cut off; then rules 7 and 8 once more, and rule 10: specks join a
+    # neighbour. With repeat_until_stable the round runs again until the zones no longer change
+    sharp_cuts: list[LineString] = []
+    sharp_whole: list[Polygon] = []
+    specks_joined: list[Polygon] = []
+    rounds = 0
+    while (on("sharp") or on("specks")) and rounds < (MAX_ROUNDS if cfg.repeat_until_stable else 1):
+        before = sorted(z.wkb for z, _ in zones)
+        if on("sharp"):
+            zones, cuts, whole = cut_sharp_corners(zones, cfg)
+            sharp_cuts += cuts
+            sharp_whole += whole
+            if cfg.repeat_tiny_after_sharp:
+                zones, more = merge_tiny_zones(poly, zones, cfg)
+                tiny_merged += more
+                zones, more = absorb_lone_tiny_zones(poly, zones, cfg)
+                lone_merged += more
+        if on("specks") and cfg.join_specks:
+            zones, joined = join_specks(zones, cfg)
+            specks_joined += joined
+        rounds += 1
+        if sorted(z.wkb for z, _ in zones) == before:
+            break
     if abs(sum(z.area for z, _ in zones) - poly.area) >= 1e-3 * poly.area:
         raise PerimeterError("the zones do not tile the footprint")
     return PerimeterResult(poly=poly, config=cfg, corners=cs, wing_ends=wing_ends, core0=core0, band0=band0,
                            core=core2, band_line=band2, lines=lines, pairs=pairs, discarded=discarded, legs=legs,
                            notches=notches, narrow_parts=tips, zones=zones, points_merged=points_merged,
                            diagonals=diagonals, corner_groups=groups, tiny_merged=tiny_merged,
-                           lone_merged=lone_merged, sharp_cuts=sharp_cuts, upto=upto)
+                           lone_merged=lone_merged, sharp_cuts=sharp_cuts, sharp_whole=sharp_whole,
+                           specks_joined=specks_joined, wing_ends_restored=wing_ends_restored, rounds=rounds,
+                           upto=upto)
