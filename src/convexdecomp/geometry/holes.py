@@ -22,8 +22,9 @@ For each polygon that has holes:
 5. Keep the `max_selected_splits_per_hole` shortest valid cuts and apply them
    sequentially as long as they continue reducing hole count.
 
-If no such split is found for that polygon:
-   - optionally fall back to triangulate() to get hole-less pieces.
+If no such split is found for that polygon, it is cut into the triangles of a
+constrained triangulation, which keeps the polygon's edges and so covers the
+polygon exactly. Zero-area slivers a split can leave behind are dropped.
 
 Processing is iterative (using a work stack) and stops as soon as all
 output polygons are holeless. The goal is to minimize the number of
@@ -35,6 +36,8 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 import math
+
+import shapely
 from shapely.geometry import (
     Polygon,
     MultiPolygon,
@@ -42,7 +45,7 @@ from shapely.geometry import (
     LineString,
     base,
 )
-from shapely.ops import split, triangulate
+from shapely.ops import split
 
 from convexdecomp.geometry._split_polygon_with_hole import (
     count_reflex_vertices_in_piece,
@@ -328,10 +331,9 @@ def holeless_polygons(
       - Apply those cuts sequentially while they keep reducing hole count.
       - Recurse on the resulting pieces until no holes remain.
 
-    If no such split can be found for a polygon and `use_triangulation_fallback`
-    is True, the function falls back to `shapely.ops.triangulate` on that
-    polygon, which yields hole-less triangles that approximate the original
-    region (respecting holes).
+    If no such split can be found for a polygon, it is cut into the triangles of
+    a constrained triangulation, which keep the polygon's edges and holes and
+    so cover it exactly.
 
     Parameters
     ----------
@@ -345,14 +347,14 @@ def holeless_polygons(
     max_selected_splits_per_hole : int, optional
         Maximum number of shortest valid collinear cuts to keep per hole.
     use_triangulation_fallback : bool, optional
-        If True, when edge-based splitting fails for a polygon with holes,
-        fall back to triangulate() to obtain hole-less polygons.
+        Kept for compatibility. The triangulation fallback always applies,
+        because the output has to be hole-less.
 
     Returns
     -------
     list[Polygon]
-        List of polygons without interior rings. The union of these polygons
-        approximates the original polygonal area (excluding holes).
+        List of polygons without interior rings whose union is the original
+        polygonal area (excluding holes). Pieces of zero area are left out.
     """
     out: List[Polygon] = []
 
@@ -397,8 +399,10 @@ def holeless_polygons(
         poly = work.pop()
 
         if not _has_holes(poly):
-            # Already holeless → final result
-            out.append(poly)
+            # Already holeless → final result. A split along a hole edge can also
+            # leave a zero-area sliver; it carries no area, so it is not a piece.
+            if poly.area > area_tol:
+                out.append(poly)
             continue
 
         # Try a single useful split along a hole edge
@@ -414,20 +418,25 @@ def holeless_polygons(
             work.extend(pieces)
             continue
 
-        # No edge-based split helped; optionally fall back to triangulation.
-        if use_triangulation_fallback:
-            tris = triangulate(poly)
-            for t in tris:
-                if isinstance(t, Polygon) and not t.is_empty:
-                    # Triangles produced by triangulate() are hole-less.
-                    out.append(t)
-        else:
-            # As a last resort, we still must satisfy "no holes" in the output.
-            # Triangulation is the most straightforward option, so if it is
-            # disabled, we will still use it here to guarantee the contract.
-            tris = triangulate(poly)
-            for t in tris:
-                if isinstance(t, Polygon) and not t.is_empty:
-                    out.append(t)
+        # No edge-based split helped. Triangulation is the last resort, whether or
+        # not `use_triangulation_fallback` is set, since the output must be hole-less.
+        out.extend(_boundary_respecting_triangles(poly, area_tol))
 
     return out
+
+
+def _boundary_respecting_triangles(poly: Polygon, area_tol: float) -> List[Polygon]:
+    """Triangles that tile `poly` exactly, holes and concave notches excluded.
+
+    ``shapely.ops.triangulate`` is a Delaunay triangulation of the vertices
+    alone: its triangles fill the convex hull, including the holes. The
+    constrained triangulation keeps every edge of the polygon, so its
+    triangles cover the polygon and nothing else.
+    """
+    triangles = [
+        t for t in shapely.constrained_delaunay_triangles(poly).geoms
+        if isinstance(t, Polygon) and t.area > area_tol
+    ]
+    if abs(sum(t.area for t in triangles) - poly.area) > max(area_tol, 1e-9 * poly.area):
+        raise ValueError("constrained triangulation did not conserve the polygon's area")
+    return triangles

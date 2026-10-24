@@ -1,0 +1,117 @@
+{
+  "footprint": {
+    "area_min_m2": 20.0,
+    "area_max_m2": 2000.0,
+    "max_holes": 4,
+    "max_exterior_vertices": 64,
+    "sliver_max_width_m": 2.0,
+    "sliver_min_aspect_ratio": 8.0,
+    "min_corner_angle_deg": 30.0,
+    "thin_part_width_m": 2.0,
+    "max_thin_part_share": 0.02,
+    "thin_hole_width_m": 1.0
+  },
+  "checks": [
+    {
+      "name": "footprint_not_one_polygon",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "n_footprint_parts"
+      ],
+      "expression": "n_footprint_parts > 1",
+      "meaning": "The footprint is several separate outlines, not one polygon, or outlines joined only by a strip too narrow for a room: separate buildings mapped as one."
+    },
+    {
+      "name": "footprint_sliver",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "footprint_width_m",
+        "footprint_length_m"
+      ],
+      "expression": "(footprint_width_m < {footprint.sliver_max_width_m}) & (footprint_length_m / footprint_width_m > {footprint.sliver_min_aspect_ratio})",
+      "meaning": "The footprint is long and thin: a wall or a fence mapped as a building."
+    },
+    {
+      "name": "footprint_below_min_area",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "footprint_area_m2"
+      ],
+      "expression": "footprint_area_m2 < {footprint.area_min_m2}",
+      "meaning": "The footprint is smaller than a building the dataset keeps."
+    },
+    {
+      "name": "footprint_above_max_area",
+      "kind": "review",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "footprint_area_m2"
+      ],
+      "expression": "footprint_area_m2 > {footprint.area_max_m2}",
+      "meaning": "The footprint is larger than the dataset's buildings."
+    },
+    {
+      "name": "footprint_too_many_holes",
+      "kind": "review",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "n_footprint_holes"
+      ],
+      "expression": "n_footprint_holes > {footprint.max_holes}",
+      "meaning": "The footprint has many courtyards or holes."
+    },
+    {
+      "name": "footprint_thin_hole",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "n_thin_holes"
+      ],
+      "expression": "n_thin_holes > 0",
+      "meaning": "A hole of the footprint is narrower than footprint.thin_hole_width_m everywhere: a light well or a mapping artefact that no zone fits into."
+    },
+    {
+      "name": "footprint_too_many_vertices",
+      "kind": "review",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "n_footprint_vertices"
+      ],
+      "expression": "n_footprint_vertices > {footprint.max_exterior_vertices}",
+      "meaning": "The footprint outline has many corners."
+    },
+    {
+      "name": "sharp_angle",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "min_corner_angle_deg"
+      ],
+      "expression": "min_corner_angle_deg < {footprint.min_corner_angle_deg}",
+      "meaning": "The outline has a corner too sharp for a room: a wedge-shaped building or a mapping artefact."
+    },
+    {
+      "name": "footprint_thin_parts",
+      "kind": "remove",
+      "first_stage": 3,
+      "at_draw": true,
+      "columns": [
+        "thin_part_share",
+        "thin_part_topology_changed"
+      ],
+      "expression": "(thin_part_share > {footprint.max_thin_part_share}) | thin_part_topology_changed",
+      "meaning": "Erasing the parts narrower than footprint.thin_part_width_m (a shrink and expand by half that width, the thinnest zone a room can be) takes more than footprint.max_thin_part_share of the footprint off, splits it or changes its holes: it changes the building rather than cleaning a mapping artefact."
+    }
+  ]
+}

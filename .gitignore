@@ -15,3 +15,9 @@ external/resplan/
 notebooks/*.pdf
 notebooks/*.png
 notebooks/*.svg
+
+# One-off checks and audits (local only)
+temp/
+# Footprints derived from the BEM4AI release run, for local evaluation only
+data/bem4ai/
+data/osm/preprocessing/

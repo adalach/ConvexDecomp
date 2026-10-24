@@ -18,7 +18,7 @@ This repository is a workflow layer around two upstream data sources that are no
 The repository exposes two case-study adapters built around one shared decomposition core:
 
 - `ResPlan`: residential floorplans with semantic room structure and room-level convex decomposition.
-- `OSM`: OpenStreetMap building footprints with artifact filtering, integrated normalization plus conservative edge regularization, optional perimeter preparation, and polygon-level convex decomposition.
+- `OSM`: OpenStreetMap building footprints (a sample of the [BEM4AI](https://github.com/adalach/BEM4AI) footprints) through an adapter of eight steps: import, local frame, duplicate and collinear vertices, thin parts, architectural axes, normalization to the axes, the footprint checks, and the working set; then the corner-ray perimeter, which splits each footprint into perimeter zones along the facades and core parts, and polygon-level convex decomposition of every zone.
 
 The public notebooks are stage-level orchestrators. Reusable implementation lives in `src/convexdecomp/`, while the ResPlan notebook clones the upstream repository into a local `external/resplan/` runtime folder only when the dataset archive source is missing.
 
@@ -54,7 +54,7 @@ The OSM case-study input is included directly. The ResPlan raw dataset is fetche
 
 - `notebooks/ResPlan_1_Preprocessing.ipynb` clones `https://github.com/m-agour/ResPlan.git` into `external/resplan/` only when that local archive source is missing, then extracts `ResPlan.zip` into `external/resplan/ResPlan.pkl`.
 - The OSM notebook pipeline reads the bundled GeoPackage `data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`, which is an anonymized reduced derivative of OpenStreetMap contributors data rather than an original dataset created in this repository.
-- Derived notebook outputs are written under `data/resplan/` and `data/osm/`. For the bundled OSM case study, the preprocessing notebook matches the paper by exporting the still non-convex cleaned footprints with 6 to 32 exterior vertices as the downstream decomposition working set, while rendering the matched original-vs-final working-set comparison through the dedicated plotting module `src/convexdecomp/plotting/osm_working_set.py`.
+- Derived notebook outputs are written under `data/resplan/`, `data/osm/` and `data/bem4ai/`. The OSM preprocessing notebook runs the adapter (`convexdecomp.osm.preprocess.run_adapter`) at a preprocessing level (`L0` local metres only, `L1` + vertices and thin parts, `L2` + architectural axes and normalization), checks every footprint against `config/checks.json`, and exports the working set: every footprint that passes (`working_set_rule = 'all'`), or the paper's still non-convex footprints with 6 to 32 exterior vertices (`'paper'`). Next to the working table it writes the checks tables and a funnel of every footprint to `preprocessing/`.
 
 See `data/README.md` for the expected local layout.
 
@@ -65,6 +65,8 @@ ConvexDecomp/
 ├── README.md
 ├── pyproject.toml
 ├── requirements.txt
+├── config/
+│   └── checks.json
 ├── data/
 │   ├── osm/
 │   └── resplan/
@@ -75,6 +77,7 @@ ConvexDecomp/
 │   └── OSM_2_Decomposition.ipynb
 └── src/convexdecomp/
     ├── core/
+    ├── corner_perimeter/
     ├── diagnostics/
     ├── geometry/
     ├── io/
@@ -87,11 +90,27 @@ ConvexDecomp/
 ## Structure
 
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
+- `src/convexdecomp/corner_perimeter/`: the corner-ray perimeter: a 4.5 m band along the facades, rays from the footprint's corners, and ten rules and a tidy step that clean up the zones without moving the outline; its README shows the pipeline, every step with figures (`docs/corner_perimeter/`) and every setting.
+- `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`), the exact openings of a hole that the OSM search tries (`openings.py`), and the splitting of polygons with holes into hole-less pieces used in preprocessing and by ResPlan (`holes.py`).
 - `src/convexdecomp/resplan/`: ResPlan preprocessing, room operations, and decomposition helpers.
-- `src/convexdecomp/osm/`: OSM normalization, axis alignment, perimeter preparation, subdivision, decomposition, and input preparation.
+- `src/convexdecomp/osm/`: the OSM adapter (`preprocess.py` its steps and `run_adapter`; `local_frames.py`, `vertices.py`, `thin_parts.py` and `axes.py` the steps themselves; `rules.py` and `footprints.py` the checks of `config/checks.json` and the measurements they read; `review_log.py` a review log in BEM4AI's format), the corner-ray perimeter on the working set (`perimeter_zones.py`), decomposition, and input preparation. `normalize.py` and `axis_alignment.py` hold the earlier normalization and edge alignment, which the adapter no longer uses; `perimeter.py` and `subdivide.py` the earlier offset perimeter and trapezoid subdivision, which the OSM decomposition notebook no longer uses.
+- `config/checks.json`: the footprint checks and their thresholds, in the layout of BEM4AI's `config/checks.json`; the footprint checks the two pipelines share are the same entries.
 - `src/convexdecomp/zones/`: zone provenance records, boundary-interface classification, and the portable two-layer export.
 - `src/convexdecomp/diagnostics/`: dataset and search summaries used by the notebooks.
+- `tools/`: the search tracer, the search-tree figure (EG-ICE 2026 style) and the search explorer web app, which record and show every state the search makes; see `tools/README.md`.
 - `external/resplan/`: created locally on first ResPlan run as a dataset source clone; not shipped in the public repo zip.
+
+## Exact Cuts
+
+Every cut the search makes runs from a reflex vertex, along a continued edge, an axis or the interior bisector, to the first point of the boundary it reaches, or along a diagonal between two vertices. The polygon's own vertex list is then split in two at the cut's ends. A cut therefore always gives exactly two pieces that share the cut exactly, and their areas add up to the polygon's: a decomposition covers its polygon with no gap and no overlap. A cut that would leave a piece below the minimum area is refused rather than accepted without the piece.
+
+A hole is opened the same way, inside the search. Two chords, each from a vertex of the hole to the first point of the outer boundary it reaches, cut the polygon into two pieces that each take part of the hole's boundary; where the hole already touches the outer boundary, one chord is enough. Every such pair is a child of the state, ranked and pruned like any other cut, so the search can choose how to open the hole rather than having it fixed beforehand. Two openings followed by each other's chord reach the same state, which the search expands only once. Further holes go to the piece that contains them and are opened later. Only if no pair of chords opens a hole does the search fall back to `holeless_polygons`.
+
+When nothing has succeeded within the adaptive budget but states are still waiting, the search keeps widening, best states first, until one succeeds or `max_failed_states` ends it.
+
+Earlier versions cut with `shapely.ops.split` along a long line through the vertex. That can cross a polygon several times, and GEOS occasionally returns the pieces without one of the faces; the OSM adapter also dropped pieces below 0.5 m² and accepted any cut keeping 90% of the area. On the bundled OSM case study this left 147 of the 2,699 buildings reported as fully convex with parts that did not fill the footprint (8 by more than 10 m²).
+
+Both decomposition notebooks now check this at every handover and stop if any area went missing. For OSM, `run_building_decomposition` records per building the footprint area and, against it, the area error of the perimeter band plus core, of the decomposition inputs and of the convex parts; `check_area_conservation` stops on any error above a millionth of the footprint. For ResPlan, `plan_area_ledger` compares every room type of a plan before and after decomposition, and `check_plan_area_conservation` stops in the same way.
 
 ## Zone Provenance And Artificial Splits
 
@@ -110,7 +129,7 @@ Each GeoPackage holds two layers.
 | `space_id` | one physical space instance; two bedrooms in one plan get two different values |
 | `zone_id` | the polygon that was handed to the decomposer |
 | `part_id` | one convex output part |
-| `zone_role` | which preparation stage produced the zone, e.g. `room`, `interior`, `perimeter_trapezoid` |
+| `zone_role` | which preparation stage produced the zone, e.g. `room`, `perimeter_zone`, `thin_zone`, `interior` (a core part) |
 | `space_part_count`, `space_is_split` | how many parts the space was split into, and whether it was split at all |
 
 `interfaces` has one row per boundary sub-segment of one part, which is one row per prospective wall face. A shared wall appears twice, once from each side, with the same `interface_key`. The `boundary_kind` column is the point of the whole artifact:

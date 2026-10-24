@@ -35,6 +35,8 @@ class FootprintNormalizationConfig:
     area_change_ratio_tol: float = 0.03
     area_change_m2_tol: float = 3.0
     max_passes: int = 8
+    # A normalization that moves the outline further than this (Hausdorff distance, m) is rejected; None: no limit.
+    max_hausdorff_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -269,6 +271,9 @@ def normalize_footprint_geometry(
         normalized = _normalize_polygon(candidate_polys[0], cfg=cfg)
         area_tol = max(cfg.area_change_m2_tol, cfg.area_change_ratio_tol * max(original.area, 1.0))
         if abs(normalized.area - original.area) > area_tol:
+            normalized_parts.append(original)
+            continue
+        if cfg.max_hausdorff_m is not None and original.hausdorff_distance(normalized) > cfg.max_hausdorff_m:
             normalized_parts.append(original)
             continue
         normalized_parts.append(normalized)

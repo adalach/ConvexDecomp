@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-from shapely.geometry import LineString, Polygon
-from shapely.ops import split
+from shapely.geometry import Polygon
 
+from convexdecomp.geometry.cuts import cut_along_ray, inward_bisector
+from convexdecomp.geometry.holes import holeless_polygons
 from convexdecomp.core.search import (
     AdaptiveSearchConfig,
     DecompositionSearchConfig,
@@ -48,6 +49,8 @@ __all__ = [
     "HVConvexDecompositionConfig",
     "all_rooms_above_area",
     "all_rooms_convex",
+    "check_plan_area_conservation",
+    "plan_area_ledger",
     "decompose_polygon_hv_with_diagnostics",
     "plan_has_rooms",
     "plan_room_polygons",
@@ -74,64 +77,32 @@ class HVConvexDecompositionConfig:
             object.__setattr__(self, "max_reflex_per_node", max(int(self.search_width) * 2, 8))
 
 
-def _cut_line_through_point(pt, angle_rad: float, L: float = 1e4) -> LineString:
-    direction = np.array([math.cos(angle_rad), math.sin(angle_rad)], dtype=float)
-    point = np.asarray(pt, dtype=float)
-    return LineString([tuple(point - direction * L), tuple(point + direction * L)])
+def _axis_cuts(poly: Polygon, vidx: int, ang: float) -> List[List[Polygon]]:
+    """The cuts from reflex vertex `vidx` along the axis at angle `ang`.
+
+    Each of the axis's two directions that runs into the room gives one cut,
+    from the vertex to the first wall it reaches, so every cut has exactly two
+    pieces whose areas add up to the room's. A direction running along a wall
+    or out of the room gives none.
+    """
+    forward = (math.cos(ang), math.sin(ang))
+    cuts = []
+    for direction in (forward, (-forward[0], -forward[1])):
+        parts = cut_along_ray(poly, vidx, direction)
+        if len(parts) == 2:
+            cuts.append(parts)
+    return cuts
 
 
-def _split_once(poly: Polygon, vidx: int, ang: float) -> List[Polygon]:
-    coords = np.asarray(poly.exterior.coords[:-1], dtype=float)
-    cut = _cut_line_through_point(coords[vidx], ang)
-    try:
-        parts = split(poly, cut)
-        return [
-            simplify_polygon_vertices(geom, tol=1e-9)
-            for geom in parts.geoms
-            if isinstance(geom, Polygon) and not geom.is_empty
-        ]
-    except Exception:
-        return [simplify_polygon_vertices(poly, tol=1e-9)]
-
-
-def _split_once_bisector(poly: Polygon, vidx: int, L: float = 1e4) -> List[Polygon]:
-    coords = np.asarray(poly.exterior.coords[:-1], dtype=float)
+def _bisector_cut(poly: Polygon, vidx: int) -> List[Polygon]:
+    """The cut from vertex `vidx` along the bisector of the room's interior angle there."""
+    coords = list(poly.exterior.coords)[:-1]
     if len(coords) <= 3 or vidx < 0 or vidx >= len(coords):
-        return [simplify_polygon_vertices(poly, tol=1e-9)]
-
-    prev_pt = coords[vidx - 1]
-    curr_pt = coords[vidx]
-    next_pt = coords[(vidx + 1) % len(coords)]
-
-    vec_prev = prev_pt - curr_pt
-    vec_next = next_pt - curr_pt
-    len_prev = float(np.hypot(*vec_prev))
-    len_next = float(np.hypot(*vec_next))
-    if len_prev <= 1e-12 or len_next <= 1e-12:
-        return [simplify_polygon_vertices(poly, tol=1e-9)]
-
-    unit_prev = vec_prev / len_prev
-    unit_next = vec_next / len_next
-    direction = unit_prev + unit_next
-
-    if float(np.hypot(*direction)) <= 1e-12:
-        direction = np.array([-(unit_next[1] - unit_prev[1]), unit_next[0] - unit_prev[0]], dtype=float)
-
-    norm = float(np.hypot(*direction))
-    if norm <= 1e-12:
-        return [simplify_polygon_vertices(poly, tol=1e-9)]
-
-    direction = direction / norm
-    cut = LineString([tuple(curr_pt - direction * L), tuple(curr_pt + direction * L)])
-    try:
-        parts = split(poly, cut)
-        return [
-            simplify_polygon_vertices(geom, tol=1e-9)
-            for geom in parts.geoms
-            if isinstance(geom, Polygon) and not geom.is_empty
-        ]
-    except Exception:
-        return [simplify_polygon_vertices(poly, tol=1e-9)]
+        return [poly]
+    direction = inward_bisector(poly, vidx)
+    if direction is None:
+        return [poly]
+    return cut_along_ray(poly, vidx, direction)
 
 
 def _poly_key(poly: Polygon, ndigits: int = 3):
@@ -264,6 +235,57 @@ def all_rooms_above_area(
     return bool((areas >= min_area).all())
 
 
+#: A room type whose convex parts differ in total area from the plan's rooms by
+#: more than this fraction did not decompose correctly.
+AREA_CONSERVATION_REL_TOL = 1e-6
+
+
+def plan_area_ledger(
+    plan: Dict[str, Any],
+    best_plan: Dict[str, Any],
+    room_keys: Sequence[str] = DEFAULT_ROOM_KEYS,
+) -> List[Dict[str, Any]]:
+    """Area of every room type before and after decomposition, for one plan.
+
+    Compares the plan as it was handed over with the decomposed plan, so the
+    vertex clean-up and the splitting of rooms with holes are covered as well
+    as the cuts.
+    """
+    rows = []
+    for key in room_keys:
+        before = sum(p.area for p in plan.get(key, []) or [] if isinstance(p, Polygon) and not p.is_empty)
+        if before <= 0.0:
+            continue
+        after = sum(p.area for p in best_plan.get(key, []) or [] if isinstance(p, Polygon) and not p.is_empty)
+        rows.append({"plan_id": plan.get("id"), "room_key": key, "area_before_m2": before,
+                     "area_after_m2": after, "area_error_m2": after - before})
+    return rows
+
+
+def check_plan_area_conservation(
+    ledger_rows: Sequence[Dict[str, Any]],
+    *,
+    rel_tol: float = AREA_CONSERVATION_REL_TOL,
+    raise_on_violation: bool = True,
+) -> List[Dict[str, Any]]:
+    """The room types whose decomposed area differs from the plan's.
+
+    With ``raise_on_violation`` a non-empty result raises instead of returning,
+    so a notebook stops before a plan with a missing piece goes any further.
+    """
+    violations = [
+        row for row in ledger_rows
+        if abs(row["area_error_m2"]) > rel_tol * row["area_before_m2"]
+    ]
+    if raise_on_violation and violations:
+        listed = ", ".join(f"{row['plan_id']}/{row['room_key']}" for row in violations[:20])
+        raise ValueError(
+            f"{len(violations)} room types changed area during the decomposition "
+            f"(more than {rel_tol:g} of the room area): {listed}"
+        )
+    return violations
+
+
 def decompose_polygon_hv_with_diagnostics(
     poly: Polygon,
     cfg: HVConvexDecompositionConfig,
@@ -316,23 +338,21 @@ def decompose_polygon_hv_with_diagnostics(
         for vidx, _ in target_reflexes:
             for ang in (angle_h, angle_v):
                 result.metrics.update(["search_split_attempts"])
-                parts = _split_once(target_poly, vidx, ang)
-                if len(parts) <= 1:
-                    continue
-                any_effective_split = True
-                if any(part.area < cfg.min_area_m2 for part in parts):
-                    result.dead_end_counts.update(["min_area_dead_end"])
-                    continue
+                for parts in _axis_cuts(target_poly, vidx, ang):
+                    any_effective_split = True
+                    if any(part.area < cfg.min_area_m2 for part in parts):
+                        result.dead_end_counts.update(["min_area_dead_end"])
+                        continue
 
-                result.metrics.update(["search_successful_splits"])
-                primary_children_survived = True
-                _register_child(parts)
+                    result.metrics.update(["search_successful_splits"])
+                    primary_children_survived = True
+                    _register_child(parts)
 
         if not primary_children_survived:
             result.metrics.update(["bisector_fallback_attempts"])
             fallback_before = len(children_by_key)
             for vidx, _ in target_reflexes:
-                bisector_parts = _split_once_bisector(target_poly, vidx)
+                bisector_parts = _bisector_cut(target_poly, vidx)
                 if len(bisector_parts) <= 1:
                     continue
                 if any(part.area < cfg.min_area_m2 for part in bisector_parts):
@@ -474,12 +494,15 @@ def pick_best_convex_variant_per_room(
     room_search_records: List[Dict[str, Any]] = []
 
     def _copy_room_polys(polys: Any) -> List[Polygon]:
+        # The cuts work on exterior rings only, so a room with a hole is first
+        # cut into hole-less pieces, which are then decomposed one by one.
         if not isinstance(polys, list):
             return []
         return [
-            simplify_polygon_vertices(poly, tol=1e-9)
+            simplify_polygon_vertices(piece, tol=1e-9)
             for poly in polys
             if isinstance(poly, Polygon) and not poly.is_empty
+            for piece in (holeless_polygons(poly) if poly.interiors else [poly])
         ]
 
     for room_key in cfg.room_keys:
@@ -625,6 +648,8 @@ def pick_best_convex_variant_per_room(
                     "failure_counts": {},
                     "geometry": poly,
                     "output_parts": list(chosen_variant),
+                    # Equal to input_area_m2 up to rounding: every cut keeps the area.
+                    "output_area_m2": float(sum(part.area for part in chosen_variant)),
                 }
             )
 

@@ -2,7 +2,7 @@
 osm_convex_decomposer.py
 
 Convex decomposition of 2D polygons (e.g. OSM building parts) using
-recursive splits along extended edges at reflex vertices.
+recursive cuts from reflex vertices.
 
 Design:
 - Polygon-centric: this module does NOT know about buildings, perimeters, etc.
@@ -10,6 +10,13 @@ Design:
 - Decomposition is modelled as a search in "state space" where a state is
   a list of current pieces [P1, P2, ...]. We refine states by splitting
   one non-convex piece at a time.
+- A cut runs from a reflex vertex along a continued edge (or the interior
+  bisector) to the first boundary point it reaches, and splits the piece's
+  vertex list there (convexdecomp.geometry.cuts). Every cut gives exactly two
+  pieces whose areas add up to the piece's, so a decomposition always covers
+  its polygon exactly. A piece with a hole is opened by two such chords from
+  the hole's vertices (convexdecomp.geometry.openings); each way of opening it
+  is a child state like any other cut.
 
 Key ideas:
 - We explore the state space with a persistent adaptive beam search.
@@ -37,11 +44,15 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import shapely
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import split
 
+from convexdecomp.geometry.cuts import cut_along_diagonal, cut_along_ray, inward_bisector
+from convexdecomp.geometry.holes import holeless_polygons
+from convexdecomp.geometry.openings import hole_openings
+from convexdecomp.core.scores import PartitionScore, minimum_width
 from convexdecomp.core.search import (
     AdaptiveSearchConfig,
     DecompositionSearchConfig,
@@ -63,8 +74,8 @@ __all__ = [
 # Global tuning constants
 # ---------------------------------------------------------------------------
 
-# Minimum area for any polygon piece to be kept during splitting.
-# Raising this prunes tiny slivers early (faster, but may lose very skinny zones).
+# Smallest piece a cut may produce. A cut that would leave a smaller piece is
+# refused, never accepted without it: dropping the crumb would leave a gap.
 MIN_PART_AREA: float = 0.5
 
 
@@ -91,6 +102,15 @@ class ConvexDecompositionConfig:
     """
     Parameters controlling the convex decomposition search.
 
+    The defaults: every zone counts the same in the score that chooses the
+    variant (zones + 20 x (1 - mean compactness)), the beam ranks states by the
+    same score with the mean weighted by area, every reflex
+    vertex offers the bisector next to its two carried-on edges, no cut may
+    create a corner under 30 degrees (relaxed only where no cut passes), and no
+    zone may be thinner than 2 m (a hard rule: such a polygon gets no
+    decomposition). ``ConvexDecompositionConfig(**PAPER_2026_SEARCH)`` searches
+    as in the EG-ICE 2026 paper.
+
     Attributes
     ----------
     search_depth : int
@@ -115,18 +135,61 @@ class ConvexDecompositionConfig:
         Weight for penalising many parts in the scoring function.
     weight_compactness : float
         Weight for rewarding compact shapes in the scoring function.
+    area_weighting : float
+        Exponent of each zone's area in the mean compactness of the score that
+        chooses the final variant: 0 lets every zone count the same (the
+        default), 1 weights a zone by its area, as the EG-ICE 2026 paper did,
+        so that a small or thin zone hardly counts.
+    beam_area_weighting : float
+        The same exponent for the score that ranks the states while the search
+        runs (default 1). An unfinished state still holds large non-convex
+        pieces; counted like the finished zones, a state that has cut one neat
+        block off a big remainder looks worse than it is, and the beam drops
+        the path to the better result.
     min_concavity_deg : float
         Minimum concavity (in degrees) for a vertex to be treated as a
         meaningful reflex. Smaller concavities are considered "almost straight".
     max_reflex_per_node : Optional[int]
         Extra cap on how many reflex vertices per polygon we consider at a node.
-        If None, defaults to search_width.
-    length_factor : float
-        How far to extend the splitting line relative to the polygon's diagonal.
+        If None, defaults to max(2 * search_width, 8).
+    cut_snap_vertex_tolerance_m : float
+        A vertex the cut passes within this distance of, before the boundary
+        point the cut would end at, takes the cut instead, so no hairline
+        sliver is left beside it.
     adaptive_search : AdaptiveSearchConfig
         Optional outer retry schedule that starts from a smaller search budget
         and increases depth first, then width, until the first successful
         parameter setting is found.
+    score_fn : callable or None
+        Score of a list of pieces (lower is better) used everywhere the search
+        compares states and picks the final variant, e.g. a
+        ``convexdecomp.core.scores.PartitionScore``. None uses `weight_parts`
+        and `weight_compactness` with the area-weighted compactness.
+    beam_ranking : str
+        How the beam orders states: ``"reflex_first"`` (non-convex pieces and
+        reflex vertices first, the score breaks ties) or ``"score_first"``.
+    bisector_always : bool
+        Offer the cut along the bisector of the interior angle at every reflex
+        vertex, next to the two carried-on edges. Otherwise the bisector is only
+        tried where neither edge gives a cut. At a shallow bend both edges run
+        almost along the piece and leave slivers, while the bisector cuts across.
+    min_corner_deg : float
+        Smallest corner a cut may create, in degrees; 0 turns the rule off. A cut
+        creates corners only at its two ends (for a hole opening, at the ends of
+        both chords), so the polygon's own sharp corners never block a cut. At a
+        reflex vertex where neither carried-on edge passes, the bisector is tried
+        instead. When no cut of a piece passes, all of them are allowed for that
+        piece (marked with the fallback label "sharp_corner"), so the rule never
+        makes a decomposition fail.
+    min_zone_width_m : float
+        Thinnest zone allowed, in metres; 0 turns the rule off. Every convex
+        piece a cut gives is a finished zone and must be at least this wide (its
+        smallest width over all directions). Non-convex pieces are cut further
+        and are not judged. At a reflex vertex where neither carried-on edge
+        passes, the bisector is tried instead. The rule is hard: a footprint
+        that cannot be cut into zones this wide, including a convex one that is
+        itself thinner, gets no decomposition. When no cut of a piece passes
+        the corner rule, only that rule is relaxed.
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
@@ -139,13 +202,19 @@ class ConvexDecompositionConfig:
     min_area_m2: float = 2.0
     weight_parts: float = 1.0
     weight_compactness: float = 20.0
+    area_weighting: float = 0.0
+    beam_area_weighting: float = 1.0
     min_concavity_deg: float = 2.0
     max_reflex_per_node: Optional[int] = None
-    length_factor: float = 10.0
     track_time: bool = False
     use_bisector_dead_end_fallback: bool = True
     cut_snap_vertex_tolerance_m: float = 0.1
     adaptive_search: AdaptiveSearchConfig = field(default_factory=_default_osm_adaptive_search)
+    score_fn: Optional[Callable[[Sequence[Polygon]], float]] = None
+    beam_ranking: str = "score_first"
+    bisector_always: bool = True
+    min_corner_deg: float = 30.0
+    min_zone_width_m: float = 2.0
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -158,6 +227,7 @@ class ConvexDecompositionConfig:
 # ---------------------------------------------------------------------------
 
 # Cache canonical polygon keys for states keyed by raw ring key
+_RING_SEPARATOR: Tuple[float, float] = (math.inf, math.inf)
 _POLY_KEY_CACHE: Dict[Tuple[Tuple[float, float], ...], Tuple[Tuple[float, float], ...]] = {}
 
 
@@ -180,13 +250,16 @@ def _polygon_orientation(coords: Sequence[Tuple[float, float]]) -> bool:
 
 def _raw_ring_key(poly: Polygon, ndigits: int = 6) -> Tuple[Tuple[float, float], ...]:
     """
-    Raw key for a polygon's exterior ring (before normalisation).
-    Used only for caching.
+    Raw key for a polygon's rings (before normalisation), holes after the
+    exterior, each behind a separator point. Used only for caching.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return tuple()
-    coords = list(poly.exterior.coords)
-    return tuple((round(x, ndigits), round(y, ndigits)) for (x, y) in coords)
+    key = [(round(x, ndigits), round(y, ndigits)) for (x, y) in poly.exterior.coords]
+    for ring in poly.interiors:
+        key.append(_RING_SEPARATOR)
+        key.extend((round(x, ndigits), round(y, ndigits)) for (x, y) in ring.coords)
+    return tuple(key)
 
 
 def is_convex_polygon(poly: Polygon, tol: float = 0.0) -> bool:
@@ -203,7 +276,7 @@ def normalize_polygon(
 ) -> Polygon:
     """
     Snap very close vertices and remove almost-collinear vertices on the exterior ring.
-    Interiors (holes) are ignored here; this cleaner is aimed at perimeter-style shapes.
+    Holes are kept as they are; this cleaner is aimed at perimeter-style shapes.
 
     Returns a cleaned Polygon; if cleaning fails or changes the polygon too much,
     returns the original polygon.
@@ -275,7 +348,7 @@ def normalize_polygon(
         dedup.append(dedup[0])
 
     try:
-        cleaned_poly = Polygon(dedup)
+        cleaned_poly = Polygon(dedup, [list(ring.coords) for ring in poly.interiors])
         if not cleaned_poly.is_valid or cleaned_poly.is_empty:
             return poly
         if poly.area > 0:
@@ -319,7 +392,9 @@ def _poly_key_for_state(poly: Polygon, ndigits: int = 3) -> Tuple[Tuple[float, f
 
     - Normalize polygon (snap + drop collinear vertices).
     - Drop very small polygons (area < MIN_PART_AREA).
-    - Canonicalise exterior ring w.r.t. rotation/orientation.
+    - Canonicalise exterior ring w.r.t. rotation/orientation; holes follow in
+      sorted order, each behind a separator point, so a piece with a hole
+      never shares a key with the same outline without it.
     - Results are cached by the raw ring key for speed.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
@@ -337,6 +412,8 @@ def _poly_key_for_state(poly: Polygon, ndigits: int = 3) -> Tuple[Tuple[float, f
     else:
         coords = list(norm.exterior.coords)
         key = _ring_canonical_key(coords, ndigits=ndigits)
+        for hole_key in sorted(_ring_canonical_key(list(r.coords), ndigits=ndigits) for r in norm.interiors):
+            key = key + (_RING_SEPARATOR,) + hole_key
 
     _POLY_KEY_CACHE[raw_key] = key
     return key
@@ -424,107 +501,25 @@ def find_reflex_vertices_scored(
 
 
 # ---------------------------------------------------------------------------
-# Split helper (extends an incident edge and calls shapely.split)
+# Cuts (exact chords from convexdecomp.geometry.cuts; no overlay involved)
 # ---------------------------------------------------------------------------
-
-def _split_polygon_with_cutter(
-    poly: Polygon,
-    cutter: BaseGeometry,
-    tol_area: float = 1e-12,
-) -> List[Polygon]:
-    """
-    Split `poly` with `cutter` and return cleaned polygon parts.
-
-    If no meaningful split occurs, returns `[poly]`.
-    """
-    if not isinstance(poly, Polygon) or poly.is_empty:
-        return [poly]
-
-    try:
-        res = split(poly, cutter)
-    except Exception:
-        return [poly]
-
-    parts_raw = [
-        g for g in getattr(res, "geoms", [res])
-        if isinstance(g, Polygon) and (not g.is_empty) and (g.area > tol_area)
-    ]
-    if len(parts_raw) <= 1:
-        return [poly]
-
-    parts: List[Polygon] = []
-    for p in parts_raw:
-        q = normalize_polygon(p)
-        if isinstance(q, Polygon) and (not q.is_empty) and q.area >= MIN_PART_AREA:
-            parts.append(q)
-
-    if len(parts) <= 1:
-        return [poly]
-
-    sum_area = sum(p.area for p in parts)
-    if poly.area > 0 and sum_area < 0.9 * poly.area:
-        return [poly]
-
-    return parts
-
-
-def _try_snap_cut_to_existing_vertex(
-    poly: Polygon,
-    coords: Sequence[Tuple[float, float]],
-    origin_idx: int,
-    ux: float,
-    uy: float,
-    snap_tol: float,
-    exclude_indices: set[int],
-    tol_area: float = 1e-12,
-) -> Optional[List[Polygon]]:
-    """
-    If the proposed cut line runs almost through an existing vertex, try using
-    the exact vertex-to-vertex segment instead of the near-miss cut.
-    """
-    if snap_tol <= 0.0:
-        return None
-
-    from shapely.geometry import LineString
-
-    x1, y1 = coords[origin_idx]
-    candidates: List[Tuple[float, float, int]] = []
-
-    for j, (xj, yj) in enumerate(coords):
-        if j in exclude_indices:
-            continue
-        perp_dist = abs((xj - x1) * uy - (yj - y1) * ux)
-        if perp_dist > snap_tol:
-            continue
-        seg_len = math.hypot(xj - x1, yj - y1)
-        if seg_len <= tol_area:
-            continue
-        candidates.append((perp_dist, seg_len, j))
-
-    candidates.sort()
-
-    for _, _, j in candidates:
-        cutter = LineString([coords[origin_idx], coords[j]])
-        parts = _split_polygon_with_cutter(poly, cutter, tol_area=tol_area)
-        if len(parts) > 1:
-            return parts
-
-    return None
 
 def cut_polygon_at_vertex(
     poly: Polygon,
     vidx: int,
     cfg: ConvexDecompositionConfig,
     use_prev: bool = True,
-    tol_area: float = 1e-12,
 ) -> List[Polygon]:
     """
-    Extend an incident edge at vertex `vidx` to a long line and split the polygon.
+    Cut at reflex vertex `vidx` along one of its edges carried on past the vertex.
 
-    Returns the resulting polygon parts. If no real split occurs or results are
-    degenerate, returns [poly].
+    With `use_prev` the previous edge is continued, otherwise the next edge is
+    continued backwards; at a reflex vertex both run into the polygon. The cut
+    ends at the first boundary point it reaches, so it always gives exactly two
+    pieces, whose areas add up to the polygon's.
 
-    Microscopic parts (area < MIN_PART_AREA) are dropped.
+    Returns the two pieces, or [poly] when there is no valid cut, including
+    when a piece would be smaller than MIN_PART_AREA.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return [poly]
@@ -535,59 +530,33 @@ def cut_polygon_at_vertex(
         return [poly]
 
     x1, y1 = coords[vidx]
-
     if use_prev:
         x0, y0 = coords[vidx - 1]
-        dx, dy = x1 - x0, y1 - y0
+        direction = (x1 - x0, y1 - y0)
     else:
         x2, y2 = coords[(vidx + 1) % n]
-        dx, dy = x2 - x1, y2 - y1
+        direction = (x1 - x2, y1 - y2)
 
-    length = math.hypot(dx, dy)
-    if length <= tol_area:
-        return [poly]
-
-    ux, uy = dx / length, dy / length
-    snap_parts = _try_snap_cut_to_existing_vertex(
+    return cut_along_ray(
         poly,
-        coords,
-        origin_idx=vidx,
-        ux=ux,
-        uy=uy,
+        vidx,
+        direction,
         snap_tol=cfg.cut_snap_vertex_tolerance_m,
-        exclude_indices={
-            vidx,
-            (vidx - 1) % n if use_prev else (vidx + 1) % n,
-        },
-        tol_area=tol_area,
+        min_part_area=MIN_PART_AREA,
     )
-    if snap_parts is not None:
-        return snap_parts
-
-    from shapely.geometry import LineString
-
-    minx, miny, maxx, maxy = poly.bounds
-    diag = math.hypot(maxx - minx, maxy - miny)
-    L = max(diag * cfg.length_factor, diag + 1.0)
-
-    p_start = (x1 - ux * L, y1 - uy * L)
-    p_end = (x1 + ux * L, y1 + uy * L)
-    return _split_polygon_with_cutter(poly, LineString([p_start, p_end]), tol_area=tol_area)
 
 
 def cut_polygon_at_vertex_bisector(
     poly: Polygon,
     vidx: int,
     cfg: ConvexDecompositionConfig,
-    tol_area: float = 1e-12,
 ) -> List[Polygon]:
     """
-    Split a polygon with the angle-bisector line through vertex `vidx`.
+    Cut at vertex `vidx` along the bisector of the polygon's interior angle.
 
-    This is a fallback for cases where extending an incident edge either
-    creates slivers or fails to progress. The line orientation is based on
-    the sum of the unit vectors pointing from the vertex to its adjacent
-    vertices, which defines the bisector line up to sign.
+    This is a fallback for cases where continuing an incident edge either
+    creates slivers or fails to progress. Like the edge cut, it ends at the
+    first boundary point it reaches.
     """
     if not isinstance(poly, Polygon) or poly.is_empty:
         return [poly]
@@ -597,81 +566,30 @@ def cut_polygon_at_vertex_bisector(
     if n <= 3 or vidx < 0 or vidx >= n:
         return [poly]
 
-    x1, y1 = coords[vidx]
-    x0, y0 = coords[vidx - 1]
-    x2, y2 = coords[(vidx + 1) % n]
-
-    vx0, vy0 = x0 - x1, y0 - y1
-    vx2, vy2 = x2 - x1, y2 - y1
-    len0 = math.hypot(vx0, vy0)
-    len2 = math.hypot(vx2, vy2)
-    if len0 <= tol_area or len2 <= tol_area:
+    direction = inward_bisector(poly, vidx)
+    if direction is None:
         return [poly]
-
-    ux0, uy0 = vx0 / len0, vy0 / len0
-    ux2, uy2 = vx2 / len2, vy2 / len2
-    dx, dy = ux0 + ux2, uy0 + uy2
-    if math.hypot(dx, dy) <= tol_area:
-        dx, dy = -(uy2 - uy0), (ux2 - ux0)
-
-    length = math.hypot(dx, dy)
-    if length <= tol_area:
-        return [poly]
-
-    ux, uy = dx / length, dy / length
-    snap_parts = _try_snap_cut_to_existing_vertex(
+    return cut_along_ray(
         poly,
-        coords,
-        origin_idx=vidx,
-        ux=ux,
-        uy=uy,
+        vidx,
+        direction,
         snap_tol=cfg.cut_snap_vertex_tolerance_m,
-        exclude_indices={vidx, (vidx - 1) % n, (vidx + 1) % n},
-        tol_area=tol_area,
+        min_part_area=MIN_PART_AREA,
     )
-    if snap_parts is not None:
-        return snap_parts
-
-    from shapely.geometry import LineString
-
-    minx, miny, maxx, maxy = poly.bounds
-    diag = math.hypot(maxx - minx, maxy - miny)
-    L = max(diag * cfg.length_factor, diag + 1.0)
-
-    line = LineString([(x1 - ux * L, y1 - uy * L), (x1 + ux * L, y1 + uy * L)])
-    return _split_polygon_with_cutter(poly, line, tol_area=tol_area)
 
 
 def cut_polygon_at_vertex_pair(
     poly: Polygon,
     start_idx: int,
     end_idx: int,
-    tol_area: float = 1e-12,
 ) -> List[Polygon]:
     """
-    Split a polygon with the exact diagonal between two existing exterior vertices.
+    Cut a polygon along the diagonal between two of its vertices.
+
+    Returns [poly] when the diagonal does not run inside the polygon or a piece
+    would be smaller than MIN_PART_AREA.
     """
-    from shapely.geometry import LineString
-
-    if not isinstance(poly, Polygon) or poly.is_empty:
-        return [poly]
-
-    coords = list(poly.exterior.coords)[:-1]
-    n = len(coords)
-    if n <= 3:
-        return [poly]
-    if start_idx < 0 or end_idx < 0 or start_idx >= n or end_idx >= n:
-        return [poly]
-    if start_idx == end_idx:
-        return [poly]
-    if abs(start_idx - end_idx) == 1 or {start_idx, end_idx} == {0, n - 1}:
-        return [poly]
-
-    return _split_polygon_with_cutter(
-        poly,
-        LineString([coords[start_idx], coords[end_idx]]),
-        tol_area=tol_area,
-    )
+    return cut_along_diagonal(poly, start_idx, end_idx, min_part_area=MIN_PART_AREA)
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +626,87 @@ def _score_polys(
         weight_parts=w_parts,
         weight_compactness=w_compact,
     )
+
+
+def _new_corner_deg(parts: Sequence[Polygon]) -> float:
+    """The smallest corner, in degrees, that a cut gave its pieces.
+
+    The pieces of one cut touch only along the cut (or both chords of a hole
+    opening), so a piece's corners the cut created are its vertices lying on
+    another piece's boundary. A vertex is there even where the cut leaves the
+    other piece straight, which drops the point from that piece's ring.
+    """
+    smallest = 180.0
+    for i, part in enumerate(parts):
+        coords = list(part.exterior.coords)[:-1]
+        minx, miny, maxx, maxy = part.bounds
+        eps = 1e-9 * max(maxx - minx, maxy - miny, 1.0)
+        points = shapely.points(coords)
+        on_cut = [False] * len(coords)
+        for j, other in enumerate(parts):
+            if j != i:
+                near = shapely.distance(other.boundary, points) <= eps
+                on_cut = [a or bool(b) for a, b in zip(on_cut, near)]
+        ccw = part.exterior.is_ccw
+        n = len(coords)
+        for k, hit in enumerate(on_cut):
+            if not hit:
+                continue
+            (ax, ay), (bx, by), (cx, cy) = coords[k - 1], coords[k], coords[(k + 1) % n]
+            ux, uy, wx, wy = cx - bx, cy - by, ax - bx, ay - by
+            angle = math.degrees(math.atan2(ux * wy - uy * wx, ux * wx + uy * wy)) % 360.0
+            if not ccw:
+                angle = (360.0 - angle) % 360.0
+            smallest = min(smallest, angle)
+    return smallest
+
+
+def _sharp(parts: Sequence[Polygon], cfg: "ConvexDecompositionConfig") -> bool:
+    """Whether a cut creates a corner smaller than `cfg.min_corner_deg`."""
+    return cfg.min_corner_deg > 0.0 and _new_corner_deg(parts) < cfg.min_corner_deg
+
+
+def _thin(parts: Sequence[Polygon], cfg: "ConvexDecompositionConfig") -> bool:
+    """Whether a cut creates a finished (convex) zone thinner than `cfg.min_zone_width_m`."""
+    return cfg.min_zone_width_m > 0.0 and any(
+        is_convex_polygon(part) and minimum_width(part) < cfg.min_zone_width_m for part in parts
+    )
+
+
+def _partition_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
+    """The configured score of a list of pieces (lower is better).
+
+    Without a `score_fn`: zones x weight_parts + weight_compactness x (1 - mean
+    Polsby-Popper compactness), the mean weighted by area ** area_weighting.
+    """
+    if cfg.score_fn is not None:
+        return float(cfg.score_fn(list(polys)))
+    if cfg.area_weighting == 1.0:
+        return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
+    return PartitionScore(weight_parts=cfg.weight_parts, weight_compactness=cfg.weight_compactness,
+                          area_weighting=cfg.area_weighting)(list(polys))
+
+
+def _beam_score(polys: Sequence[Polygon], cfg: ConvexDecompositionConfig) -> float:
+    """The score that ranks states while the search runs (lower is better)."""
+    if cfg.score_fn is not None:
+        return float(cfg.score_fn(list(polys)))
+    if cfg.beam_area_weighting == 1.0:
+        return _score_polys(list(polys), cfg.weight_parts, cfg.weight_compactness)
+    return PartitionScore(weight_parts=cfg.weight_parts, weight_compactness=cfg.weight_compactness,
+                          area_weighting=cfg.beam_area_weighting)(list(polys))
+
+
+#: The search as in the EG-ICE 2026 paper (apart from the exact cuts and the hole openings):
+#: ``ConvexDecompositionConfig(**PAPER_2026_SEARCH)``.
+PAPER_2026_SEARCH: Dict[str, Any] = {
+    "area_weighting": 1.0,
+    "beam_area_weighting": 1.0,
+    "beam_ranking": "reflex_first",
+    "bisector_always": False,
+    "min_corner_deg": 0.0,
+    "min_zone_width_m": 0.0,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -778,14 +777,16 @@ def _enumerate_states_for_polygon(
         best_area = -1.0
         diagonal_fallback_area = -1.0
 
+        # The piece cut next is the largest one that is not convex: a piece with a
+        # hole, or one with reflex vertices on its outer ring.
         for idx, candidate in enumerate(pieces):
             if not isinstance(candidate, Polygon) or candidate.is_empty or is_convex_polygon(candidate):
                 continue
-            if candidate.area > diagonal_fallback_area:
+            if not candidate.interiors and candidate.area > diagonal_fallback_area:
                 diagonal_fallback_idx = idx
                 diagonal_fallback_area = candidate.area
             reflexes = find_reflex_vertices_scored(candidate, cfg)
-            if not reflexes:
+            if not reflexes and not candidate.interiors:
                 continue
             if candidate.area > best_area:
                 best_area = candidate.area
@@ -807,8 +808,65 @@ def _enumerate_states_for_polygon(
             if existing is None or (existing.fallback_labels and not child.fallback_labels):
                 children_by_key[child_key] = child
 
+        def _register_relaxed(target_idx: int, refused: List[Tuple[List[Polygon], bool, bool]]) -> None:
+            """No cut passed the rules: allow the cuts that break only the corner rule.
+
+            The width rule is never relaxed; if every cut leaves a zone too thin, the
+            state is a dead end.
+            """
+            for parts, sharp, thin in refused:
+                if not thin:
+                    _register_child(target_idx, parts, fallback_label="sharp_corner")
+
+        def _dead_end(min_area_pruned: bool, thin_pruned: bool) -> StateExpansionResult:
+            reason = "thin_zone_dead_end" if thin_pruned else ("min_area_dead_end" if min_area_pruned else "no_reflex_dead_end")
+            result.dead_end_counts.update([reason])
+            return result
+
+        if best_idx is not None and pieces[best_idx].interiors:
+            # Every way of opening the hole with two chords is a child, like any other cut.
+            target_poly = pieces[best_idx]
+            min_area_pruned = False
+            refused_openings: List[Tuple[List[Polygon], bool, bool]] = []
+            for opening in hole_openings(
+                target_poly,
+                snap_tol=cfg.cut_snap_vertex_tolerance_m,
+                min_part_area=MIN_PART_AREA,
+            ):
+                result.metrics.update(["search_split_attempts"])
+                if any(part.area < cfg.min_area_m2 for part in opening.pieces):
+                    min_area_pruned = True
+                    continue
+                sharp, thin = _sharp(opening.pieces, cfg), _thin(opening.pieces, cfg)
+                if sharp or thin:
+                    refused_openings.append((list(opening.pieces), sharp, thin))
+                    continue
+                result.metrics.update(["search_successful_splits"])
+                _register_child(best_idx, opening.pieces)
+            if not children_by_key:
+                _register_relaxed(best_idx, refused_openings)
+            if children_by_key:
+                result.children.extend(children_by_key.values())
+                return result
+            thin_pruned = any(thin for _, _, thin in refused_openings)
+
+            # No pair of chords opens the hole: every chord reaches another hole first,
+            # or every opening leaves a piece below the minimum area. Split the piece
+            # along its hole edges instead, as before the search knew openings.
+            parts = [part for part in holeless_polygons(target_poly) if part.area > 0.0]
+            if len(parts) >= 2:
+                if _thin(parts, cfg):
+                    thin_pruned = True
+                else:
+                    _register_child(best_idx, parts, fallback_label="hole_edge_split")
+            if children_by_key:
+                result.children.extend(children_by_key.values())
+                return result
+            return _dead_end(min_area_pruned, thin_pruned)
+
         if best_idx is None or not best_reflexes:
             min_area_pruned = False
+            thin_pruned = False
             if diagonal_fallback_idx is not None:
                 target_poly = pieces[diagonal_fallback_idx]
                 coords = list(target_poly.exterior.coords)[:-1]
@@ -822,8 +880,11 @@ def _enumerate_states_for_polygon(
                         if any(part.area < cfg.min_area_m2 for part in parts):
                             min_area_pruned = True
                             continue
+                        if _thin(parts, cfg):
+                            thin_pruned = True
+                            continue
                         all_convex_parts = all(is_convex_polygon(part) for part in parts)
-                        score = _score_polys(parts, cfg.weight_parts, cfg.weight_compactness)
+                        score = _beam_score(parts, cfg)
                         diagonal_candidates.append((all_convex_parts, score, parts))
 
                 if diagonal_candidates:
@@ -835,28 +896,46 @@ def _enumerate_states_for_polygon(
                         result.children.extend(children_by_key.values())
                         return result
 
-            result.dead_end_counts.update(["min_area_dead_end" if min_area_pruned else "no_reflex_dead_end"])
-            return result
+            return _dead_end(min_area_pruned, thin_pruned)
 
         target_poly = pieces[best_idx]
         min_area_pruned = False
 
+        refused_cuts: List[Tuple[List[Polygon], bool, bool]] = []
+        rules_on = cfg.min_corner_deg > 0.0 or cfg.min_zone_width_m > 0.0
         for vidx, _ in best_reflexes:
-            for use_prev in (True, False):
+            passed_here = 0
+            for use_prev in (True, False, None):
+                if use_prev is None and not (cfg.bisector_always or (rules_on and not passed_here)):
+                    continue  # the bisector: always, or where neither edge passed the rules
                 result.metrics.update(["search_split_attempts"])
-                parts = cut_polygon_at_vertex(target_poly, vidx, cfg, use_prev=use_prev)
+                if use_prev is None:
+                    parts = cut_polygon_at_vertex_bisector(target_poly, vidx, cfg)
+                else:
+                    parts = cut_polygon_at_vertex(target_poly, vidx, cfg, use_prev=use_prev)
                 if len(parts) != 2:
                     continue
                 if any(part.area < cfg.min_area_m2 for part in parts):
                     min_area_pruned = True
                     continue
+                sharp, thin = _sharp(parts, cfg), _thin(parts, cfg)
+                if sharp or thin:
+                    result.metrics.update(["sharp_corner_refusals"] if sharp else [])
+                    result.metrics.update(["thin_zone_refusals"] if thin else [])
+                    refused_cuts.append((list(parts), sharp, thin))
+                    continue
 
+                passed_here += 1
                 result.metrics.update(["search_successful_splits"])
                 _register_child(best_idx, parts)
+
+        if not children_by_key:
+            _register_relaxed(best_idx, refused_cuts)
 
         if children_by_key:
             result.children.extend(children_by_key.values())
             return result
+        thin_pruned = any(thin for _, _, thin in refused_cuts)
 
         if cfg.use_bisector_dead_end_fallback:
             result.metrics.update(["bisector_fallback_attempts"])
@@ -868,6 +947,9 @@ def _enumerate_states_for_polygon(
                 if any(part.area < cfg.min_area_m2 for part in parts):
                     min_area_pruned = True
                     continue
+                if _thin(parts, cfg):
+                    thin_pruned = True
+                    continue
 
                 _register_child(best_idx, parts, fallback_label="bisector_dead_end")
             if len(children_by_key) > bisector_child_count_before:
@@ -877,8 +959,7 @@ def _enumerate_states_for_polygon(
             result.children.extend(children_by_key.values())
             return result
 
-        result.dead_end_counts.update(["min_area_dead_end" if min_area_pruned else "no_reflex_dead_end"])
-        return result
+        return _dead_end(min_area_pruned, thin_pruned)
 
     search = run_polygon_state_search(
         [root],
@@ -892,8 +973,9 @@ def _enumerate_states_for_polygon(
         expand_state_fn=_expand_state,
         adaptive_cfg=cfg.adaptive_search,
         default_width=cfg.search_width,
-        state_score_fn=lambda pieces: _score_polys(pieces, cfg.weight_parts, cfg.weight_compactness),
+        state_score_fn=lambda pieces: _beam_score(pieces, cfg),
         min_piece_area=cfg.min_area_m2,
+        ranking=cfg.beam_ranking,
     )
     dead_end_counts = search.get("dead_end_counts") or {}
     return {
@@ -997,6 +1079,37 @@ def decompose_polygon_with_stats(
             "fallback_used": None,
         })
 
+    # A polygon that is convex, or becomes convex once straight vertices are dropped, is
+    # itself one zone; thinner than the zone width limit, it is a zone too thin.
+    if cfg.min_zone_width_m > 0.0 and (is_convex_polygon(poly) or is_convex_polygon(normalize_polygon(poly))) \
+            and minimum_width(poly) < cfg.min_zone_width_m:
+        return _with_time({
+            "convex_success": False,
+            "n_variants": 0,
+            "best_variant": [],
+            "fully_convex_best": False,
+            "has_small_zone": False,
+            "n_parts": 0,
+            "search_terminated_by": "thinner_than_min_zone_width",
+            "n_failed_terminal_states": 0,
+            "n_depth_limit_dead_ends": 0,
+            "n_no_reflex_dead_ends": 0,
+            "n_min_area_dead_ends": 0,
+            "n_states_seen": 1,
+            "search_total_states": 1,
+            "search_max_depth": 0,
+            "search_max_width": 0,
+            "search_split_attempts": 0,
+            "search_successful_splits": 0,
+            "bisector_fallback_attempts": 0,
+            "bisector_fallback_successes": 0,
+            "search_depth_used": None,
+            "search_width_used": None,
+            "search_attempt_count": 0,
+            "search_attempt_history": [],
+            "fallback_used": None,
+        })
+
     # Early exit: polygon already convex → treat as one successful variant
     if is_convex_polygon(poly):
         return _with_time({
@@ -1069,7 +1182,7 @@ def decompose_polygon_with_stats(
         best_uses_fallback = True
         for i, var in enumerate(var_list):
             parts = var["parts"]
-            score = _score_polys(parts, cfg.weight_parts, cfg.weight_compactness)
+            score = _partition_score(parts, cfg)
             uses_fallback = bool(var.get("fallback_used"))
             if (score, uses_fallback) < (best_score, best_uses_fallback):
                 best_score = score
@@ -1107,7 +1220,6 @@ def decompose_polygon_with_stats(
         "search_attempt_history": list(search.get("search_attempt_history") or []),
         "fallback_used": best_variant_record.get("fallback_used"),
     })
-
 
 
 def decompose_polygon_best(poly: Polygon, cfg: ConvexDecompositionConfig) -> List[Polygon]:

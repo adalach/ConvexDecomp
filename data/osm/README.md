@@ -12,9 +12,14 @@ Bundled input:
   - license: ODbL 1.0
   - note: original OSM identifiers are intentionally removed and replaced with anonymized identifiers such as `osm_0001`
 
-Derived artifact written here:
+Derived artifacts written here by `notebooks/OSM_1_Preprocessing.ipynb`:
 
-- `subset_buildings_gdf.pkl` from `notebooks/OSM_1_Preprocessing.ipynb`
+- `subset_buildings_gdf.pkl`: the decomposition working set (`sample_id`, `geometry`, `area_m2`, `n_vertices`, `n_holes`)
+- `preprocessing/checks_footprints.csv` and `preprocessing/checks_preprocessed.csv`: one row per footprint with its measurements and failed checks
+- `preprocessing/funnel.csv`: one row per footprint with where it left the pipeline and why, and how far preprocessing moved it
+- `preprocessing/review_log.csv`: manual review decisions, keyed by footprint fingerprint
+
+The coordinates are local metres (each footprint centred near the origin), although the file's CRS label reads `EPSG:32633`; the notebook drops the label.
 
 To build a different OSM input file in the same minimal public schema, run:
 

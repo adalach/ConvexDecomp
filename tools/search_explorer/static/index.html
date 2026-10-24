@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search Explorer</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Search explorer</h1>
+    <label class="example">Footprint
+      <select id="example"></select>
+    </label>
+    <button id="run" type="button">Run search</button>
+    <button id="fit" type="button" class="secondary">Fit tree</button>
+    <div id="status" class="status">Loading…</div>
+  </header>
+  <main>
+    <aside id="controls">
+      <section>
+        <h2>Score <span class="hint">lower is better</span></h2>
+        <p class="formula">zones + w<sub>C</sub>(1 − C̄) + w<sub>R</sub>(1 − R̄) + w<sub>N</sub>·narrow + w<sub>S</sub>·small</p>
+        <div class="presets" id="score-presets"></div>
+        <div id="score-controls"></div>
+      </section>
+      <section>
+        <h2>Search</h2>
+        <div class="presets" id="search-presets"></div>
+        <div id="search-controls"></div>
+      </section>
+      <section>
+        <h2>View</h2>
+        <div id="view-controls"></div>
+        <div class="legend">
+          <div><span class="swatch ring expanded"></span>expanded</div>
+          <div><span class="swatch ring parked"></span>parked (overflow / deferred)</div>
+          <div><span class="swatch ring success"></span>success (a variant)</div>
+          <div><span class="swatch ring dead_end"></span>dead end</div>
+          <div><span class="swatch ring duplicate"></span>duplicate of a known state</div>
+          <div><span class="swatch fill focus"></span>piece the search cuts next</div>
+          <div><span class="swatch fill rest"></span>rest of the state, earlier cuts as lines</div>
+          <div><span class="swatch line chord"></span>the cut that made the state</div>
+          <div><span class="swatch line best"></span>path to the chosen variant</div>
+        </div>
+      </section>
+    </aside>
+    <section id="tree-pane">
+      <svg id="tree"></svg>
+      <div id="busy" hidden>Searching…</div>
+    </section>
+    <aside id="details">
+      <section id="selected">
+        <h2>Selected state</h2>
+        <p class="hint">Click a state in the tree or a variant below.</p>
+      </section>
+      <section>
+        <h2>Variants <span class="hint">found by the search, and references, ranked by the current score</span></h2>
+        <ol id="variants"></ol>
+      </section>
+    </aside>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

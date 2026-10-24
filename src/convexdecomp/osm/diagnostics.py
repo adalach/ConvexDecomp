@@ -18,7 +18,9 @@ from convexdecomp.plotting.geometry_grid import GHSL_gridplot
 
 __all__ = [
     "annotate_polygon_failure_reasons",
+    "area_ledger",
     "build_parts_geometry",
+    "check_area_conservation",
     "classify_failure_reason",
     "collect_building_polygons",
     "collect_decomposition_polygons",
@@ -35,6 +37,10 @@ __all__ = [
     "summarize_building_decomposition",
     "sum_time_list",
 ]
+
+#: A building whose convex parts differ in total area from its decomposition
+#: inputs by more than this fraction did not decompose correctly.
+AREA_CONSERVATION_REL_TOL = 1e-6
 
 
 def normalize_input_geometry(geom):
@@ -92,7 +98,11 @@ def collect_building_polygon_entries(row: pd.Series) -> list[tuple[Polygon, str]
     """
     if bool(row.get("perimeter_defined", False)):
         entries: list[tuple[Polygon, str]] = []
-        entries.extend((poly, "perimeter_part") for poly in extract_polygons(row.get("perimeter_parts")))
+        parts = extract_polygons(row.get("perimeter_parts"))
+        roles = row.get("perimeter_part_roles")
+        if not isinstance(roles, (list, tuple)) or len(roles) != len(parts):
+            roles = ["perimeter_part"] * len(parts)
+        entries.extend(zip(parts, roles))
         entries.extend((poly, "interior") for poly in extract_polygons(row.get("interior_geom")))
         return entries
     return [(poly, "footprint") for poly in extract_polygons(row.get("geometry"))]
@@ -380,6 +390,81 @@ def min_part_area(parts: list[Polygon]) -> float:
     return float(min(areas)) if areas else float("nan")
 
 
+def area_ledger(row: pd.Series, inputs: list[Polygon], parts: list[Polygon] | None) -> dict[str, Any]:
+    """How far each stage's pieces are from the footprint's area, for one building.
+
+    The footprint is the building's ``geometry`` as it enters the decomposition
+    stage. Each stage is compared with it, not with the stage before, so a loss
+    anywhere shows up at every later stage too:
+
+    - ``perimeter_area_error_m2``: perimeter band plus core (NaN when the
+      building was not split into perimeter and core),
+    - ``inputs_area_error_m2``: the polygons handed to the convex decomposer,
+    - ``parts_area_error_m2``: the convex parts (NaN when the decomposition failed).
+
+    ``building_area_conserved`` is True when the decomposition succeeded and
+    every error is within ``AREA_CONSERVATION_REL_TOL`` of the footprint area.
+    """
+    footprint = row.get("geometry")
+    footprint_area = float(footprint.area) if footprint is not None and not footprint.is_empty else float("nan")
+
+    def _error(pieces) -> float:
+        return float(sum(p.area for p in extract_polygons(pieces)) - footprint_area)
+
+    perimeter_error = (
+        _error([row.get("perimeter_geom"), row.get("interior_geom")])
+        if bool(row.get("perimeter_defined", False))
+        else float("nan")
+    )
+    inputs_error = _error(inputs) if inputs else float("nan")
+    parts_error = _error(parts) if parts else float("nan")
+    tol = AREA_CONSERVATION_REL_TOL * footprint_area
+    errors = [e for e in (perimeter_error, inputs_error) if not np.isnan(e)]
+    conserved = (
+        parts is not None
+        and bool(parts)
+        and not np.isnan(footprint_area)
+        and abs(parts_error) <= tol
+        and all(abs(e) <= tol for e in errors)
+    )
+    return {
+        "footprint_area_m2": footprint_area,
+        "perimeter_area_error_m2": perimeter_error,
+        "inputs_area_error_m2": inputs_error,
+        "parts_area_error_m2": parts_error,
+        "building_area_conserved": bool(conserved),
+    }
+
+
+def check_area_conservation(
+    buildings_convex_gdf: pd.DataFrame,
+    *,
+    rel_tol: float = AREA_CONSERVATION_REL_TOL,
+    raise_on_violation: bool = True,
+) -> pd.DataFrame:
+    """The buildings where a stage of the decomposition gained or lost area.
+
+    A decomposition that failed is not a violation (it has no parts to
+    check); a stage that changed the area is, at any stage. With
+    ``raise_on_violation`` a non-empty result raises instead of returning, so
+    a notebook stops before a building with a missing piece goes any further.
+    """
+    df = buildings_convex_gdf
+    tol = rel_tol * df["footprint_area_m2"]
+    stage_columns = ["perimeter_area_error_m2", "inputs_area_error_m2", "parts_area_error_m2"]
+    off = pd.Series(False, index=df.index)
+    for column in stage_columns:
+        off |= df[column].abs().fillna(0.0) > tol
+    violations = df.loc[off, ["sample_id", "footprint_area_m2", *stage_columns]]
+    if raise_on_violation and len(violations):
+        listed = ", ".join(map(str, violations["sample_id"].head(20)))
+        raise ValueError(
+            f"{len(violations)} buildings changed area during the decomposition "
+            f"(more than {rel_tol:g} of the footprint): {listed}"
+        )
+    return violations
+
+
 def run_building_decomposition(
     buildings_convex_gdf: gpd.GeoDataFrame,
     cfg: Any,
@@ -401,6 +486,8 @@ def run_building_decomposition(
                     "building_decomposition_failed": False,
                     "n_successful_polygons": 0,
                     "building_has_small_zone": False,
+                    "area_error_m2": float("nan"),
+                    **area_ledger(row, [], None),
                     "convex_parts_geom": None,
                     "polygon_times_seconds": [],
                     "polygon_fallbacks": [],
@@ -432,6 +519,7 @@ def run_building_decomposition(
         building_has_small_zone = False
         n_failed_polygons = 0
         n_small_zone_polygons = 0
+        area_error_m2 = 0.0
 
         polygon_roles = row.get("decomp_polygon_roles") or []
 
@@ -450,6 +538,14 @@ def run_building_decomposition(
             n_failed_polygons += int(not bool(stats["fully_convex_best"]))
             n_small_zone_polygons += int(bool(stats["has_small_zone"]))
             convex_parts.extend(stats["best_variant"])
+            # The parts of a successful decomposition must add up to the polygon.
+            polygon_area_error = (
+                float(sum(part.area for part in stats["best_variant"]) - polygon.area)
+                if stats["fully_convex_best"]
+                else float("nan")
+            )
+            if stats["fully_convex_best"]:
+                area_error_m2 += abs(polygon_area_error)
 
             polygon_rows.append(
                 {
@@ -475,6 +571,7 @@ def run_building_decomposition(
                     "fallback_used": stats.get("fallback_used"),
                     "polygon_time_seconds": stats.get("time_seconds"),
                     "best_min_part_area_m2": min_part_area(stats["best_variant"]),
+                    "area_error_m2": polygon_area_error,
                     "geometry": polygon,
                     "building_geometry": row["geometry"],
                     "best_variant_geom": build_parts_geometry(stats["best_variant"]),
@@ -483,6 +580,7 @@ def run_building_decomposition(
             )
 
         building_fully_convex = bool(polygon_flags) and all(polygon_flags)
+        ledger = area_ledger(row, polygons, convex_parts if building_fully_convex else None)
         n_successful_polygons = int(sum(polygon_flags))
         used_depths = [int(value) for value in polygon_search_depths if value is not None]
         used_widths = [int(value) for value in polygon_search_widths if value is not None]
@@ -500,6 +598,8 @@ def run_building_decomposition(
                 "building_decomposition_failed": n_failed_polygons > 0,
                 "n_successful_polygons": n_successful_polygons,
                 "building_has_small_zone": building_has_small_zone,
+                "area_error_m2": area_error_m2 if building_fully_convex else float("nan"),
+                **ledger,
                 "convex_parts_geom": build_parts_geometry(convex_parts),
                 "polygon_times_seconds": polygon_times,
                 "polygon_fallbacks": polygon_fallbacks,
@@ -557,6 +657,8 @@ def summarize_building_decomposition(
         "n_polygons_total": n_polygons_total,
         "n_polygons_success": n_polygons_success,
         "n_buildings_success": int(buildings_convex_gdf["building_fully_convex"].fillna(False).sum()),
+        # Fully convex and the parts add up to the input: a success that lost area is no success.
+        "n_buildings_area_conserved": int(buildings_convex_gdf["building_area_conserved"].fillna(False).sum()),
         "n_buildings_failed": int(buildings_convex_gdf["building_decomposition_failed"].fillna(False).sum()),
         "n_small_zone": int(buildings_convex_gdf["building_has_small_zone"].fillna(False).sum()),
         "n_polygons_retried": int(attempt_series.apply(lambda xs: sum(v > 1 for v in xs)).sum()),
