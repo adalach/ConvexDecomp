@@ -190,7 +190,89 @@ function scoreTerms(pieceIds) {
   return t;
 }
 
-// ---------------------------------------------------------------- server
+// ---------------------------------------------------------------- backend: the server, or Python in the browser
+
+function serverBackend() {
+  const json = async (res) => {
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    return res.json();
+  };
+  return {
+    engine: () => fetch("api/engine").then(json),
+    examples: () => fetch("api/examples").then(json),
+    run: (body) => fetch("api/run", { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify(body) }).then(json),
+  };
+}
+
+function pyodideBackend(cfg) {
+  // One worker runs explorer_core.py with Pyodide. It runs one search at a time: a run asked for
+  // meanwhile waits, and only the newest waiting one is kept. A run longer than the time limit
+  // ends the worker, and a new one starts.
+  let worker = null;
+  let nextId = 0;
+  const pending = new Map();
+  let inFlight = false;
+  let waiting = null;
+
+  function spawn() {
+    worker = new Worker("static/worker.js", { type: "module" });
+    worker.onmessage = (ev) => {
+      const m = ev.data;
+      if (m.progress) { if (!state.data) document.getElementById("status").textContent = m.progress; return; }
+      const p = pending.get(m.id);
+      if (!p) return;
+      pending.delete(m.id);
+      if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
+    };
+    worker.onerror = (ev) => fail(ev.message || "the Python worker failed");
+    call("boot", null, { pyodide: cfg.pyodide, bundle: new URL(cfg.bundle, document.baseURI).href, limits: cfg.limits });
+  }
+
+  function call(kind, payload, bootCfg) {
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ id, kind, payload, cfg: bootCfg });
+    });
+  }
+
+  function fail(reason) {
+    for (const p of pending.values()) p.reject(new Error(reason));
+    pending.clear();
+  }
+
+  function restart(reason) {
+    worker.terminate();
+    fail(reason);
+    spawn();
+  }
+
+  async function pump() {
+    if (inFlight || !waiting) return;
+    const job = waiting;
+    waiting = null;
+    inFlight = true;
+    const seconds = cfg.limits.seconds;
+    const timer = setTimeout(() => restart(`stopped after ${seconds} s; try a smaller budget`), seconds * 1000);
+    try { job.resolve(await call("run", job.body)); } catch (err) { job.reject(err); }
+    finally { clearTimeout(timer); inFlight = false; pump(); }
+  }
+
+  spawn();
+  return {
+    engine: () => call("engine"),
+    examples: () => call("examples"),
+    run: (body) => new Promise((resolve, reject) => {
+      if (waiting) waiting.reject(new Error("superseded by a newer run"));
+      waiting = { body, resolve, reject };
+      pump();
+    }),
+  };
+}
+
+const CONFIG = window.EXPLORER_CONFIG || { backend: "server" };
+const backend = CONFIG.backend === "pyodide" ? pyodideBackend(CONFIG) : serverBackend();
 
 async function runSearch() {
   const seq = ++state.seq;
@@ -198,10 +280,7 @@ async function runSearch() {
                  search: state.values.search };
   document.getElementById("busy").hidden = false;
   try {
-    const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    const data = await res.json();
+    const data = await backend.run(body);
     if (seq !== state.seq) return; // a newer run was started meanwhile
     const sameExample = state.data && state.data.example === data.example;
     state.data = data;
@@ -567,15 +646,32 @@ async function start() {
   buildPresets("score-presets", SCORE_PRESETS, SCORE_CONTROLS, "score");
   buildPresets("search-presets", SEARCH_PRESETS, SEARCH_CONTROLS, "search");
   // Settings this engine does not have yet stay visible but greyed out (the server ignores them).
-  const engine = await (await fetch("/api/engine")).json();
+  let engine;
+  try {
+    engine = await backend.engine();
+  } catch (err) {
+    document.getElementById("status").innerHTML = `<span class="fail">${err.message}</span>`;
+    return;
+  }
   for (const d of SEARCH_CONTROLS) {
     if (engine.options[d.key] === false) {
       d.input.disabled = true;
       d.input.closest(".control").classList.add("unavailable");
       d.input.closest(".control").title = "Not in this version of the engine";
     }
+    // The static page caps the budget, so that one search cannot hold the browser for long.
+    const cap = (engine.limits || {})[d.key];
+    if (cap !== undefined && d.input.type === "range" && +d.input.max > cap) {
+      d.input.max = cap;
+      d.input.closest(".control").title = `At most ${cap} on this page`;
+    }
   }
-  state.examples = await (await fetch("/api/examples")).json();
+  if (engine.attribution) {
+    const credits = document.getElementById("credits");
+    credits.textContent = engine.attribution;
+    credits.hidden = false;
+  }
+  state.examples = await backend.examples();
   const sel = document.getElementById("example");
   for (const e of state.examples) {
     const o = document.createElement("option");

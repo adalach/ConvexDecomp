@@ -12,8 +12,12 @@ Runs under pytest, or directly with ``python tests/test_search_trace.py``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
+import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 from shapely.geometry import LineString, Polygon
@@ -81,7 +85,7 @@ def _explorer_client():
 
     spec = importlib.util.spec_from_file_location("search_explorer_app", ROOT / "tools" / "search_explorer" / "app.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # pydantic resolves the request models' annotations through it
+    sys.modules[spec.name] = module  # registered like an imported module
     spec.loader.exec_module(module)
     return module, TestClient(module.app)
 
@@ -104,6 +108,44 @@ def test_explorer_run_returns_a_tree_whose_successes_cover_the_polygon():
         area = sum(data["pieces"][i]["area"] for i in node["pieces"])
         assert math.isclose(area, COURTYARD.area, rel_tol=1e-6), node["number"]
         assert all(data["pieces"][i]["convex"] for i in node["pieces"])
+
+
+def _explorer_core():
+    sys.path.insert(0, str(ROOT / "tools" / "search_explorer"))
+    import explorer_core
+
+    return explorer_core
+
+
+def test_explorer_core_runs_without_a_server_and_caps_the_budget():
+    core = _explorer_core()
+    core.EXAMPLES["test_l_shape"] = {"id": "test_l_shape", "label": "L shape", "polygon": core.rings(L_SHAPE),
+                                     "references": []}
+    data = core.run({"example": "test_l_shape", "search": {"width": 30}}, limits={"width": 8})
+    assert data["stats"]["success"] and data["request"]["search"]["width"] == 8
+    # What the browser worker calls: errors come back as JSON with the server's status code.
+    reply = json.loads(core.call_json("run", json.dumps({"example": "test_l_shape", "search": {"width": 0}})))
+    assert reply["status"] == 422 and "width" in reply["error"]
+    assert json.loads(core.call_json("run", json.dumps({"example": "nowhere"})))["status"] == 404
+
+
+def test_the_static_build_runs_from_its_own_zip():
+    with tempfile.TemporaryDirectory() as tmp:
+        out, unpacked = Path(tmp) / "site", Path(tmp) / "explorer"
+        subprocess.run([sys.executable, str(ROOT / "tools" / "search_explorer" / "build_static.py"),
+                        "--out", str(out), "--osm-examples", "0"], check=True, capture_output=True)
+        assert (out / "index.html").exists() and (out / "static" / "worker.js").exists()
+        assert '"backend": "pyodide"' in (out / "static" / "config.js").read_text()
+        zipfile.ZipFile(out / "explorer.zip").extractall(unpacked)
+        # What the worker does, in a fresh Python that sees the unpacked files and its own packages only.
+        code = ("import json, sys\n"
+                "sys.path.insert(0, sys.argv[1] + '/tools/search_explorer')\n"
+                "import explorer_core as core\n"
+                "core.use_examples(sys.argv[1] + '/examples.json')\n"
+                "print(core.call_json('run', json.dumps({'example': 'paper_example', 'search': {'max_failed': 20}}), '{}'))\n")
+        reply = subprocess.run([sys.executable, "-I", "-c", code, str(unpacked)], check=True, capture_output=True, text=True)
+        data = json.loads(reply.stdout.strip().splitlines()[-1])
+        assert data["example"] == "paper_example" and data["nodes"]
 
 
 if __name__ == "__main__":
