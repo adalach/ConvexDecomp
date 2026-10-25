@@ -107,7 +107,7 @@ class ConvexDecompositionConfig:
     same score with the mean weighted by area, every reflex
     vertex offers the bisector next to its two carried-on edges, no cut may
     create a corner under 30 degrees (relaxed only where no cut passes), and no
-    zone may be thinner than 2 m (a hard rule: such a polygon gets no
+    zone may be thinner than 1.2 m (a hard rule: such a polygon gets no
     decomposition). ``ConvexDecompositionConfig(**PAPER_2026_SEARCH)`` searches
     as in the EG-ICE 2026 paper.
 
