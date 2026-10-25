@@ -42,8 +42,11 @@ needs pandas and geopandas besides the package): the perimeter zones in `perimet
 (`perimeter_zone` or `thin_zone`) and the core parts in `interior_geom`; every zone and core part then goes to the
 decomposition as it is (a convex one comes back as one part, the others are cut); a footprint the procedure cannot
 zone is decomposed whole. On ConvexDecomp's current working set (see "Samples" below) with the engine at 1.2 m:
-the perimeter gives 7,338 zones (107 thinner than 2 m, 371 not convex) and 689 core parts, and the decomposition
-921 of 990 buildings fully convex, 69 with a zone the search could not cut, no area lost. Whether the workbench's
+the perimeter gives 7,338 zones (107 thinner than 2 m, 371 not convex) and 689 core parts. The decomposition
+alone leaves 69 buildings with a zone the search cannot cut; with OSM_2's fallback
+(`run_building_decomposition(..., fallback="merge")`: such a zone is merged with a neighbouring zone and the union
+decomposed, else the whole footprint) 988 of 990 buildings are fully convex, 67 of them after merging (76 merges), no
+area lost; Caen_0016 and Zaragoza_0026 have no decomposition. Whether the workbench's
 Zones takes the same is Agata's decision.
 
 ## The page

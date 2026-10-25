@@ -18,7 +18,7 @@ This repository is a workflow layer around two upstream data sources that are no
 The repository exposes two case-study adapters built around one shared decomposition core:
 
 - `ResPlan`: residential floorplans with semantic room structure and room-level convex decomposition.
-- `OSM`: OpenStreetMap building footprints (a sample of the [BEM4AI](https://github.com/adalach/BEM4AI) footprints) through an adapter of eight steps: import, local frame, duplicate and collinear vertices, thin parts, architectural axes, normalization to the axes, the footprint checks, and the working set; then the corner-ray perimeter, which splits each footprint into perimeter zones along the facades and core parts, and polygon-level convex decomposition of every zone.
+- `OSM`: OpenStreetMap building footprints (a sample of the [BEM4AI](https://github.com/adalach/BEM4AI) footprints) through an adapter of eight steps: import, local frame, duplicate and collinear vertices, thin parts, architectural axes, normalization to the axes, the footprint checks, and the working set; then the corner-ray perimeter, which splits each footprint into perimeter zones along the facades and core parts, and polygon-level convex decomposition of every zone; a zone the search cannot cut is merged with a neighbouring zone and the union decomposed (else the whole footprint), `run_building_decomposition(..., fallback="merge")`.
 
 The public notebooks are stage-level orchestrators. Reusable implementation lives in `src/convexdecomp/`, while the ResPlan notebook clones the upstream repository into a local `external/resplan/` runtime folder only when the dataset archive source is missing.
 
