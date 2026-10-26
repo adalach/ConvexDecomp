@@ -18,15 +18,18 @@ from shapely.geometry import Polygon, box
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from convexdecomp.convex_zones import (LAYERS, NUMBERS, ZoneConfig, decompose_pieces, decompose_zones,  # noqa: E402
-                                       engine_call, engine_config, piece_records, preview, settings_table,
+from convexdecomp.convex_zones import (LAYERS, NUMBERS, ZoneConfig, already_convex, decompose_pieces,  # noqa: E402
+                                       decompose_zones, engine_call, engine_config, fingerprint, is_final,
+                                       piece_records, preview, search_tree, settings_table, variant_records,
                                        zone_records)
 from convexdecomp.core.search import AdaptiveSearchConfig  # noqa: E402
 from convexdecomp.corner_perimeter import corner_ray_perimeter  # noqa: E402
-from convexdecomp.osm.decompose import ConvexDecompositionConfig  # noqa: E402
+from convexdecomp.osm.decompose import PAPER_2026_SEARCH, ConvexDecompositionConfig  # noqa: E402
 
 DATA = Path(__file__).resolve().parent / "data" / "corner_perimeter_footprints.json"
 
+# An L whose two arms are 6 m wide: three convex variants, two of them as good as each other.
+ELL = Polygon([(0, 0), (20, 0), (20, 6), (6, 6), (6, 20), (0, 20)])
 # A 1 m strip along a 10 x 6 block: thinner than the 1.2 m width rule on its own, one rectangle with the block.
 STRIP_AND_BLOCK = [(box(0, 0, 10, 1), "thin"), (box(0, 1, 10, 6), "zone")]
 # A 1 m wide piece whose union with either neighbour keeps a 1 m arm; only the whole 10 x 10 square decomposes.
@@ -172,6 +175,67 @@ def test_real_footprints():
         rows = zone_records(result)
         assert all(r["min_width_m"] >= 1.2 - 1e-9 for r in rows), sid
         assert len(piece_records(result)) == len(result.pieces)
+
+
+def test_convex_zones_are_returned_without_a_search():
+    zones = list(corner_ray_perimeter(box(0, 0, 20, 12)).zones)
+    assert already_convex(zones)
+    result = decompose_zones(zones, footprint=box(0, 0, 20, 12))
+    assert sorted(p.wkb for p, _ in result.parts) == sorted(z.wkb for z, _ in zones)
+    assert all(p.stats["search_terminated_by"] == "already_convex" for p in result.first)
+    assert not is_final(box(0, 0, 10, 1)) and is_final(box(0, 0, 10, 1), ZoneConfig(min_zone_width_m=0.0))
+    assert not is_final(ELL) and not already_convex(ARM_PIECES)
+
+
+def test_ranked_variants_and_their_terms():
+    for cfg in (engine_config(), engine_config(None, **PAPER_2026_SEARCH)):
+        stats = engine_call(cfg)(ELL)
+        ranked = stats["ranked_variants"]
+        assert len(ranked) >= 2 and ranked[0]["parts"] == stats["best_variant"]
+        assert [v["score"] for v in ranked] == sorted(v["score"] for v in ranked)
+        for row in variant_records(stats, cfg):
+            assert math.isclose(sum(row["terms"].values()), row["score"], rel_tol=1e-9)
+            assert math.isclose(sum(row["shares"].values()), 1.0, rel_tol=1e-9)
+
+
+def test_fingerprints():
+    a, b = box(0, 0, 4, 3), box(4, 0, 9, 3)
+    assert fingerprint([a, b]) == fingerprint([b, a]) == fingerprint([Polygon(list(b.exterior.coords)[::-1]), a])
+    assert fingerprint(a) != fingerprint(b) and fingerprint([a, b]) != fingerprint([a])
+
+
+def test_a_chosen_variant_is_kept():
+    result = decompose_zones([(ELL, "zone")])
+    piece = result.pieces[0]
+    rows = variant_records(piece.stats)
+    chosen = decompose_zones([(ELL, "zone")], choices={piece.fingerprint: rows[2]["fingerprint"], "f" * 16: "0"})
+    assert chosen.chosen == {piece.fingerprint: 2} and chosen.choices_missing == ["f" * 16]
+    assert fingerprint([p for p, _ in chosen.parts]) == rows[2]["fingerprint"]
+    assert piece_records(chosen)[0]["variant"] == 2
+    got = preview(ELL, [(ELL, "zone")], choices={piece.fingerprint: rows[1]["fingerprint"]})
+    assert fingerprint(got["layers"]["perimeter_parts"]) == rows[1]["fingerprint"]
+    block = decompose_zones(STRIP_AND_BLOCK).first[1]          # merged away with the strip: its choice is missing
+    merged = decompose_zones(STRIP_AND_BLOCK, choices={block.fingerprint: fingerprint(block.parts)})
+    assert merged.fallback == "merge" and merged.choices_missing == [block.fingerprint]
+
+
+def test_search_tree():
+    tree = search_tree(ELL)
+    json.dumps(tree)
+    assert tree == search_tree(ELL)
+    ranked = variant_records(engine_call(engine_config())(ELL))
+    assert [v["fingerprint"] for v in tree["variants"]] == [r["fingerprint"] for r in ranked]
+    nodes = {n["id"]: n for n in tree["nodes"]}
+    for v in tree["variants"]:
+        node = nodes[v["node"]]
+        assert node["status"] == "success" and node["variant"] == v["rank"]
+    assert nodes[tree["variants"][0]["node"]]["on_best_path"] and tree["truncated"] == 0
+    small = search_tree(ELL, max_states=2)
+    kept = {n["id"] for n in small["nodes"]}
+    assert small["truncated"] == len(tree["nodes"]) - len(kept)
+    assert all(v["node"] in kept for v in small["variants"])
+    square = search_tree(box(0, 0, 5, 5))
+    assert len(square["nodes"]) == 1 and square["nodes"][0]["variant"] == 0 and square["variants"][0]["node"] == 0
 
 
 if __name__ == "__main__":

@@ -1062,6 +1062,11 @@ def decompose_polygon_with_stats(
             sub-polygon below `cfg.min_area_m2`.
         - n_states_seen : int
             Number of unique decomposition states explored.
+        - ranked_variants : list[dict]
+            Every fully convex variant found, best first: ``parts``, ``score``
+            (lower is better) and ``fallback_used``. The ranking is by score, a
+            variant without fallback cuts first among equal scores, then in the
+            order the search found them; the first is ``best_variant``.
     """
     t0 = time.perf_counter() if getattr(cfg, "track_time", False) else None
 
@@ -1099,6 +1104,7 @@ def decompose_polygon_with_stats(
             "search_attempt_count": 0,
             "search_attempt_history": [],
             "fallback_used": None,
+            "ranked_variants": [],
         })
 
     # A polygon that is convex, or becomes convex once straight vertices are dropped, is
@@ -1130,6 +1136,7 @@ def decompose_polygon_with_stats(
             "search_attempt_count": 0,
             "search_attempt_history": [],
             "fallback_used": None,
+            "ranked_variants": [],
         })
 
     # Early exit: polygon already convex → treat as one successful variant
@@ -1159,6 +1166,8 @@ def decompose_polygon_with_stats(
             "search_attempt_count": 0,
             "search_attempt_history": [],
             "fallback_used": None,
+            "ranked_variants": [{"parts": [poly], "score": float(_partition_score([poly], cfg)),
+                                 "fallback_used": None}],
         })
 
     # Enumerate ONLY fully convex variants.
@@ -1195,24 +1204,17 @@ def decompose_polygon_with_stats(
             "search_attempt_count": int(search.get("search_attempt_count", 0)),
             "search_attempt_history": list(search.get("search_attempt_history") or []),
             "fallback_used": None,
+            "ranked_variants": [],
         })
 
-    # At this point, every variant in `variants` is fully convex by construction.
-    def _pick_best(var_list: List[Dict[str, Any]]) -> Dict[str, Any]:
-        best_idx = 0
-        best_score = float("inf")
-        best_uses_fallback = True
-        for i, var in enumerate(var_list):
-            parts = var["parts"]
-            score = _partition_score(parts, cfg)
-            uses_fallback = bool(var.get("fallback_used"))
-            if (score, uses_fallback) < (best_score, best_uses_fallback):
-                best_score = score
-                best_uses_fallback = uses_fallback
-                best_idx = i
-        return var_list[best_idx]
-
-    best_variant_record = _pick_best(variants)
+    # At this point, every variant in `variants` is fully convex by construction. They are ranked by
+    # score, a variant without fallback cuts first among equal scores, then in the order they were found.
+    ranked = sorted(
+        ({"parts": list(var["parts"]), "score": float(_partition_score(var["parts"], cfg)),
+          "fallback_used": var.get("fallback_used")} for var in variants),
+        key=lambda var: (var["score"], bool(var["fallback_used"])),
+    )
+    best_variant_record = ranked[0]
     best_variant = best_variant_record["parts"]
     has_small_zone = any(p.area < cfg.min_area_m2 for p in best_variant)
 
@@ -1241,6 +1243,7 @@ def decompose_polygon_with_stats(
         "search_attempt_count": int(search.get("search_attempt_count", 0)),
         "search_attempt_history": list(search.get("search_attempt_history") or []),
         "fallback_used": best_variant_record.get("fallback_used"),
+        "ranked_variants": ranked,
     })
 
 

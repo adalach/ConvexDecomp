@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import shapely
@@ -163,7 +164,8 @@ def numbers(result: BuildingZones) -> dict[str, Any]:
 
 
 def preview(footprint: Polygon, zones: list[tuple[Polygon, str]] | None = None, config: ZoneConfig | None = None,
-            *, perimeter: CornerRayConfig | None = None, decompose: Decompose | None = None) -> dict[str, Any]:
+            *, perimeter: CornerRayConfig | None = None, decompose: Decompose | None = None,
+            choices: Mapping[str, str] | None = None) -> dict[str, Any]:
     """One building's preview: ``layers`` (:data:`LAYERS`, shapely geometries), ``numbers`` (:data:`NUMBERS`),
     ``fate`` (kept, with the fallback that made it; or dropped with the reason ``decomposition_failed``, whose detail
     says whether the fallback's time ran out, or ``decomposition_error``), ``seconds`` and ``result`` (the
@@ -171,7 +173,9 @@ def preview(footprint: Polygon, zones: list[tuple[Polygon, str]] | None = None, 
 
     ``zones`` are the perimeter's zones as ``(polygon, kind)`` pairs (``PerimeterResult.zones``, or the zones after
     edits by hand); without them the corner-ray perimeter of ``footprint`` is run first with ``perimeter``, and a
-    footprint it cannot zone is decomposed whole (one zone of kind ``footprint``, with no fallback).
+    footprint it cannot zone is decomposed whole (one zone of kind ``footprint``, with no fallback). ``choices``
+    (``{piece fingerprint: variant fingerprint}``) keep another ranked variant of a piece than the engine's choice
+    (:func:`~.building.decompose_pieces`).
     """
     t0 = time.perf_counter()
     if zones is None:
@@ -180,7 +184,7 @@ def preview(footprint: Polygon, zones: list[tuple[Polygon, str]] | None = None, 
         except Exception:  # noqa: BLE001 - the perimeter's own page reports why; the footprint is decomposed whole
             zones = [(footprint, "footprint")]
     try:
-        result = decompose_zones(zones, config, footprint=footprint, decompose=decompose)
+        result = decompose_zones(zones, config, footprint=footprint, decompose=decompose, choices=choices)
     except Exception as exc:  # noqa: BLE001 - a building the engine stops on is a fate, not a crash
         return {"layers": {"footprint": [footprint]}, "numbers": {}, "result": None,
                 "fate": {"status": "dropped", "reason": "decomposition_error",
@@ -207,10 +211,14 @@ def zone_records(result: BuildingZones) -> list[dict[str, Any]]:
 
 
 def piece_records(result: BuildingZones) -> list[dict[str, Any]]:
-    """The pieces kept as rows: ``piece``, ``kind``, ``sources``, ``decomposed``, ``parts``, ``fallback_used`` (the
-    engine's relaxed rules), ``attempts`` (searches, deeper or wider), ``dead_ends``, ``terminated_by``,
-    ``seconds`` and ``geometry``."""
-    return [{"piece": k, "kind": p.kind, "sources": list(p.sources), "decomposed": p.convex, "parts": len(p.parts),
+    """The pieces kept as rows: ``piece``, ``fingerprint``, ``kind``, ``sources``, ``decomposed``, ``searched``
+    (whether the engine searched it: not when it was convex as it is), ``variants`` (how many convex variants it
+    found) and ``variant`` (the rank kept: 0 is the engine's choice), ``parts``, ``fallback_used`` (the engine's
+    relaxed rules), ``attempts`` (searches, deeper or wider), ``dead_ends``, ``terminated_by``, ``seconds`` and
+    ``geometry``."""
+    return [{"piece": k, "fingerprint": p.fingerprint, "kind": p.kind, "sources": list(p.sources),
+             "decomposed": p.convex, "searched": p.stats.get("search_terminated_by") != "already_convex",
+             "variants": len(p.stats.get("ranked_variants") or []), "variant": p.variant, "parts": len(p.parts),
              "fallback_used": p.stats.get("fallback_used"), "attempts": int(p.stats.get("search_attempt_count") or 0),
              "dead_ends": int(p.stats.get("n_failed_terminal_states") or 0),
              "terminated_by": p.stats.get("search_terminated_by"), "seconds": round(p.seconds, 4),

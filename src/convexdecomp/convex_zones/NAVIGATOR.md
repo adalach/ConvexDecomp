@@ -127,6 +127,77 @@ the building's time stays within the budget plus its first pass and perimeter; t
 timeout stays the safety net. A budget makes a building near it depend on the machine's speed; none of the 990 is
 near it.
 
+## The sub-page: variants, choices and the search tree
+
+Agata (2026-10-26): the page applies to the buildings with a zone that is not convex and skips the others; a click on
+a decomposed zone switches it to the next variant in the ranking; and a read-only view of a zone's search tree, like
+the search explorer's but without its settings, opens as a sub-page, with the variants listed and evaluated beside it.
+The package gives all three (README, "Zones that need no search", "Variants and choices", "The search tree").
+
+**Skipping.** `is_final(zone, ZoneConfig(**values))` is the engine's own test for a zone it returns as it is, with no
+search: convex and at least `min_zone_width_m` wide. A convex zone thinner than that goes to the engine, has no
+decomposition and goes to the fallback; a convex zone under `min_area_m2` (even under 0.5 m²) is final, since the area
+rule only stops cuts. `already_convex(zones, config)`: every zone final. For such a building `decompose_zones` gives
+exactly its zones (each one convex zone, in the package's order: core parts last), no search, no fallback, so the
+workbench can skip it ("already convex") without calling the package. On our 990: 535 buildings skipped, and every
+one of them equal to the package's result as a set of zones; 7,162 of 8,028 zones final.
+
+**Variants.** The engine's result for a piece now holds `ranked_variants` (`parts`, `score`, `fallback_used`), best
+first by the engine's own ranking: score, then a variant without fallback cuts, then the order found; the first is
+`best_variant`. `variant_records(piece.stats, config)` gives the rows the right panel needs: `rank`, `fingerprint`,
+`score`, `terms` and `shares` (zones, compactness and, when its weight is on, narrow; they add up to the score),
+`zones`, `narrowest_m`, `smallest_m2`, `fallback_used`, `parts`. Memoised engine results from an earlier pin have no
+`ranked_variants`. On our 990, 473 of 7,952 pieces have more than one variant, at most 10.
+
+**Choices.** `fingerprint(piece.polygon)` and `fingerprint(variant parts)` (16 hex digits from the normalized geometry
+rounded to 1e-6 m; `Piece.fingerprint`, and `fingerprint` in `piece_records` and `variant_records`). `preview`,
+`decompose_zones` and `decompose_pieces` take `choices={piece fingerprint: variant fingerprint}` and keep that
+variant (`BuildingZones.chosen`: rank kept per piece; `Piece.variant`; `variant` in `piece_records`). A choice
+applies to the pieces kept after the fallback: a merged piece and a polygon of the whole footprint have their own
+fingerprints and take choices like any piece; a zone merged away takes none, and its choice is listed in
+`BuildingZones.choices_missing`, as is a choice whose variant the search no longer finds (other settings). Choices
+never change which pieces fail, so they never change the fallback. "Click for the next variant" is the choice of
+`rank + 1` of that piece's `variant_records`.
+
+**The tree.** `search_tree(piece.polygon, ZoneConfig(**values), max_states=...)` is the piece's search as data (README,
+"The search tree", and the function's docstring for every field): `nodes` with parent, depth, the cut that made it
+(`cut`, `cut_kind`), what the search did with it (`status`: `success`, `dead_end`, `parked`, `expanded`, `active`,
+`merged`, `duplicate`; `status_lines` in words), `pieces`, `coloured` and `starts` (what a thumbnail shows in colour),
+`chord` (the cut's lines), `children` (count in the whole tree), `on_best_path` and `variant` (rank, for a success);
+`variants` as `variant_records` with each variant's state (`node`); `pieces` with rings and measures; `stats`;
+`truncated`. It is the run's own search (the tracer checks that it is the same run), so the ranks match the run's,
+for every piece searched without a time limit: the first pass always; a union searched in the fallback under the
+time budget may have stopped early in the run (`search_terminated_by == "time_limit"` in its stats). It needs
+Python 3.12 (the workbench's venv has 3.12.10). Sizes on our 990: most searched pieces have tens of states; the
+largest, a core part, 1,724 states in 2.9 s and 0.8 MB of JSON, so `max_states=600` (the explorer's own limit for
+thumbnails) keeps a page fast; it keeps the first states in generation order and the path to every variant.
+
+**What the explorer's tree view encodes** (`tools/search_explorer/static/app.js`, for the page to mirror):
+
+- Layout: a top-down tidy tree (d3.tree), node radius R = 24 px, node size 2.6 R + 14 by 6.4 R, siblings 1 apart and
+  cousins 1.25; edges are vertical links from a node's bottom to its child's top. Children shown in this order:
+  those with children first, then those on the chosen variant's path, successes, dead ends, then generation order.
+  At most 10 children per state; the rest fold into a "+N more" box that shows them all on click. Duplicates are
+  hidden unless switched on. A tree of up to 600 states starts fully open; a larger one starts with only the paths
+  to the variants open (or to the deepest state when there is none). A small +/− circle at a node's lower right
+  folds or unfolds its children.
+- A state is a white disc with its thumbnail clipped to the disc (drawn when at most 600 states are shown): its
+  pieces, those in `coloured` filled (convex: a pastel by piece number from #f6c89f, #c5e1a5, #ffd8e1, #d7c4e8,
+  #fff1a8, #b9e4dd, #f4b6b6, #ffe0b2, #dcedc8, #e1bee7, #b2ebf2; not convex: #3070b3) with dark edges, the others
+  #e4e4e4 with thin #8a8a86 edges; the cut's `chord` in orange #e37222 with round caps; `starts` as small white dots
+  with a dark outline.
+- The ring is the status: success #2e8540 (3.2 px), dead end #c4071b, parked #0065bd dashed, expanded #555, active
+  #888 (1.6 px); merged and duplicate #999 dashed, a duplicate drawn at 0.7 R and labelled "= S<n>".
+- Below the node: "S<number>", the cut (a hole opening on two lines, split at " + "), then "<n>p · <score>". Above
+  the engine's choice: "chosen" in #2e8540. Edges #9a9a96 1 px; the chosen variant's path #333 3.5 px; edges to
+  duplicates dashed.
+- The right panel: the selected state drawn large with its zones numbered, "score = n zones + compactness (+
+  narrow ...)", and a table per zone (m², compactness, width, convex); below it the variants ranked (#rank, S<number>,
+  an "engine's choice" badge), "score · zones · narrowest (red when under the narrow width) · smallest m²", and a
+  stacked bar of the terms scaled to the largest score listed: zones #98c6ea, compactness #0065bd, rectangularity
+  #a2ad00, narrow #c4071b, small #e37222. The explorer ranks by its own score in the browser; the page should use
+  the package's `rank`, which is the engine's.
+
 ## Checks for the task
 
 - A preview of a building equals a run with the same settings, zone for zone (as `test_s4_preview.py` does for the
@@ -136,6 +207,9 @@ near it.
   (`thin` and `zone`) merges into one piece (fallback `merge`); a 1 m arm beside two blocks whose unions keep the arm
   is decomposed as the whole 10 m × 10 m footprint (fallback `whole`); a 10 m × 1 m footprint decomposed whole has
   no decomposition (`decomposition_failed`). In every kept case the convex zones tile the footprint.
+- The skip equals the package: for every building `already_convex` holds for, `decompose_zones` gives its zones.
+- A chosen variant shows in the preview and in a run, and a choice of a zone merged away is reported missing.
+- The tree's variants are `variant_records` of the same piece, in the same order, each on a success state.
 - ConvexDecomp's own tests at the commit: `tests/test_convex_zones.py`, `tests/test_decomposition_fallback.py`
   (the same fallback through `run_building_decomposition`) and the perimeter's.
 

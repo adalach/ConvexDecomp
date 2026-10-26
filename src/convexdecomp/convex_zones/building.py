@@ -7,21 +7,29 @@ decomposes each of them as it is: a convex zone comes back as one part, the othe
 :func:`merge_failed_pieces` merges it with neighbours, and the whole footprint is the last resort, within a time
 budget (:class:`~.settings.ZoneConfig`'s fallback section). :func:`decompose_pieces` is the same with the engine call
 and the fallback given directly: a caller that stores or times every piece's search passes its own ``decompose``.
+
+A zone :func:`is_final` holds for goes to the engine and comes back as it is, with no search; a building whose zones
+all hold it (:func:`already_convex`) keeps its zones. ``choices`` (``{piece fingerprint: variant fingerprint}``) give a
+piece another of its ranked variants (:mod:`.variants`) than the engine's choice.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import Any
 
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
-from convexdecomp.osm.decompose import ConvexDecompositionConfig, decompose_polygon_with_stats, extract_polygons
+from convexdecomp.core.scores import minimum_width
+from convexdecomp.osm.decompose import (ConvexDecompositionConfig, decompose_polygon_with_stats, extract_polygons,
+                                        is_convex_polygon)
 
 from .settings import ZoneConfig, engine_config
+from .variants import fingerprint
 
 #: the engine call: a polygon and the seconds its search may take (None: no limit) in, the search's result out, as
 #: ``decompose_polygon_with_stats`` gives it
@@ -50,6 +58,8 @@ class Piece:
     stats: dict[str, Any]
     #: the search's time (the engine's own ``time_seconds`` when it measures it)
     seconds: float = 0.0
+    #: the rank of the variant kept (0: the engine's choice; another when chosen)
+    variant: int = 0
 
     @property
     def convex(self) -> bool:
@@ -58,8 +68,17 @@ class Piece:
 
     @property
     def parts(self) -> list[Polygon]:
-        """The convex parts (none when the engine found no decomposition)."""
-        return list(self.stats["best_variant"]) if self.convex else []
+        """The convex parts of the variant kept (none when the engine found no decomposition)."""
+        if not self.convex:
+            return []
+        if self.variant:
+            return list(self.stats["ranked_variants"][self.variant]["parts"])
+        return list(self.stats["best_variant"])
+
+    @cached_property
+    def fingerprint(self) -> str:
+        """The piece's fingerprint (:func:`~.variants.fingerprint` of its polygon)."""
+        return fingerprint(self.polygon)
 
 
 @dataclass
@@ -81,6 +100,9 @@ class BuildingZones:
     searches: list[tuple[str, float]] = field(default_factory=list)
     #: whether the fallback's time budget ran out before the building was decomposed
     out_of_time: bool = False
+    #: the choices that applied, ``{piece fingerprint: rank}``, and those whose piece or variant is not there
+    chosen: dict[str, int] = field(default_factory=dict)
+    choices_missing: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -101,6 +123,22 @@ class BuildingZones:
     def discarded_seconds(self) -> float:
         """The time of the searches whose result the building did not keep (the fallback's attempts)."""
         return max(0.0, self.seconds - sum(p.seconds for p in self.pieces))
+
+
+def is_final(polygon: Polygon, config: ZoneConfig | None = None) -> bool:
+    """Whether the engine returns ``polygon`` as one zone, as it is, without a search: it is convex (the engine's own
+    test) and, with the width rule on, at least ``min_zone_width_m`` wide. A convex zone thinner than that has no
+    decomposition of its own (the fallback merges it); a convex zone smaller than ``min_area_m2`` is final."""
+    config = config or ZoneConfig()
+    if not isinstance(polygon, Polygon) or polygon.is_empty or not is_convex_polygon(polygon):
+        return False
+    return not (config.min_zone_width_m > 0.0 and minimum_width(polygon) < config.min_zone_width_m)
+
+
+def already_convex(zones: Sequence[Polygon | tuple[Polygon, str]], config: ZoneConfig | None = None) -> bool:
+    """Whether every zone is final (:func:`is_final`): the building's convex zones are its zones, in their order,
+    with no search and no fallback (:func:`decompose_zones` gives exactly that)."""
+    return bool(zones) and all(is_final(z[0] if isinstance(z, tuple) else z, config) for z in zones)
 
 
 def _timed(decompose: Decompose, polygon: Polygon, max_seconds: float | None = None) -> tuple[dict[str, Any], float]:
@@ -192,6 +230,7 @@ def decompose_pieces(
     min_shared_edge_m: float = 0.05,
     whole: bool = True,
     max_seconds: float | None = None,
+    choices: Mapping[str, str] | None = None,
 ) -> BuildingZones:
     """Decompose every zone with ``decompose``; when a piece fails, merge (``merge``) and then decompose the whole
     footprint (``whole``; the union of the zones when ``footprint`` is None), the two together within ``max_seconds``
@@ -202,6 +241,11 @@ def decompose_pieces(
     positions in ``zones`` as given. Zones that are all of kind ``footprint`` (no perimeter) get no fallback. When
     merging gives up and the whole footprint does not decompose either, the building keeps its first pass; when the
     time ran out on the way, :attr:`BuildingZones.out_of_time` says so.
+
+    ``choices`` apply to the pieces kept, after the fallback: a piece whose fingerprint is chosen keeps the variant
+    with the chosen fingerprint among its ranked variants (:attr:`BuildingZones.chosen`); a choice whose piece or
+    variant is not there is listed in :attr:`BuildingZones.choices_missing`. A merged piece and a polygon of the
+    whole footprint are pieces with fingerprints of their own; a zone merged away takes no choice.
     """
     pairs = _zone_pairs(zones)
     order = sorted(range(len(pairs)), key=lambda k: pairs[k][1] == "core")
@@ -216,6 +260,8 @@ def decompose_pieces(
 
     if result.ok or not first or all(kind == "footprint" for _, kind in pairs):
         result.seconds = sum(s for _, s in searches)
+        if choices:
+            _choose(result, choices)
         return result
     deadline = None if max_seconds is None else time.perf_counter() + max_seconds
     if merge:
@@ -240,7 +286,22 @@ def decompose_pieces(
             result.pieces, result.fallback = candidates, "whole"
     result.out_of_time = result.fallback is None and deadline is not None and time.perf_counter() >= deadline
     result.seconds = sum(s for _, s in searches)
+    if choices:
+        _choose(result, choices)
     return result
+
+
+def _choose(result: BuildingZones, choices: Mapping[str, str]) -> None:
+    by_piece = {p.fingerprint: p for p in result.pieces if p.convex}
+    for piece_fp, variant_fp in choices.items():
+        piece = by_piece.get(piece_fp)
+        ranks = [] if piece is None else [k for k, v in enumerate(piece.stats.get("ranked_variants") or [])
+                                          if fingerprint(v["parts"]) == variant_fp]
+        if not ranks:
+            result.choices_missing.append(piece_fp)
+            continue
+        piece.variant = ranks[0]
+        result.chosen[piece_fp] = ranks[0]
 
 
 def decompose_zones(
@@ -249,6 +310,7 @@ def decompose_zones(
     *,
     footprint: Polygon | MultiPolygon | None = None,
     decompose: Decompose | None = None,
+    choices: Mapping[str, str] | None = None,
 ) -> BuildingZones:
     """A building's convex zones from its perimeter's zones, with the settings of ``config``
     (:func:`decompose_pieces`; ``decompose`` defaults to the engine with :func:`~.settings.engine_config`)."""
@@ -256,8 +318,8 @@ def decompose_zones(
     return decompose_pieces(zones, decompose or engine_call(engine_config(config)), footprint=footprint,
                             merge=config.merge_failed, max_share=config.merge_max_share,
                             min_shared_edge_m=config.min_shared_edge_m, whole=config.whole_footprint,
-                            max_seconds=config.fallback_max_seconds or None)
+                            max_seconds=config.fallback_max_seconds or None, choices=choices)
 
 
-__all__ = ["BuildingZones", "Decompose", "Piece", "decompose_pieces", "decompose_zones", "engine_call",
-           "merge_failed_pieces", "shared_edge_m"]
+__all__ = ["BuildingZones", "Decompose", "Piece", "already_convex", "decompose_pieces", "decompose_zones",
+           "engine_call", "is_final", "merge_failed_pieces", "shared_edge_m"]

@@ -64,6 +64,47 @@ settings as arguments: `decompose(polygon, max_seconds)` returns the engine's re
 stopped after `max_seconds` (None in the first pass, the time left of the budget in the fallback).
 `engine_call(cfg)` makes one from an engine config; a caller that stores every piece's search passes its own.
 
+## Zones that need no search
+
+A zone that is convex (the engine's own test) and at least as wide as the narrowest zone goes to the engine and comes
+back as it is, with no search: `is_final(zone, config)`. A convex zone thinner than that has no decomposition of its
+own and goes to the fallback; a convex zone under the smallest zone area is final (only cuts must not make zones that
+small). `already_convex(zones, config)` says that every zone of a building is final: `decompose_zones` then gives
+exactly its zones, each as one convex zone, with no fallback. On the 990-building working set 7,162 of the 8,028
+zones are final and 535 buildings are already convex; every final zone came back unsearched, and every other zone
+was searched or, 23 thin convex zones, refused.
+
+## Variants and choices
+
+The engine keeps every convex variant it finds for a piece, best first, in its result (`ranked_variants`: `parts`,
+`score`, `fallback_used`): ranked by score, a variant without fallback cuts first among equal scores, then in the
+order the search found them, so the first is the engine's choice. `variant_records(piece.stats, config)` gives them
+as rows: `rank`, `fingerprint`, `score`, `terms` and `shares` (each term of the score and its share of it, as the
+search explorer's list of variants shows them; the terms add up to the score), `zones`, `narrowest_m`,
+`smallest_m2`, `fallback_used` and `parts`. On the working set 473 of 7,952 pieces have more than one variant, at
+most 10.
+
+`fingerprint(polygon or parts)` names a piece or a variant by its geometry (normalized, rounded to a micrometre), so
+a choice can be found again after the building is decomposed again with the same settings. `decompose_zones`,
+`decompose_pieces` and `preview` take `choices={piece fingerprint: variant fingerprint}`: the piece keeps that
+variant instead of the engine's choice (`BuildingZones.chosen` records the rank kept, `Piece.variant` too). A choice
+whose piece or variant is not there (other settings, or a zone the merge fallback merged away) is listed in
+`BuildingZones.choices_missing` and changes nothing. A merged piece and a polygon of the whole footprint have
+fingerprints of their own and take choices like any piece.
+
+## The search tree
+
+`search_tree(piece, config)` records the engine's search of one piece with the settings of `config`
+(`convexdecomp.osm.search_trace`: the traced run is the same run, with the same states, variants and choice) and
+returns it as plain data for a page: the states (`nodes`, depth first, children in the order the search generated
+them), each with its parent, depth, the cut that made it, what the search did with it (`status`), the pieces it holds
+and those a thumbnail shows in colour, and its variant's rank for a success; the ranked variants (`variants`, as
+`variant_records` with the parts as piece numbers, each with the id of its state); every distinct piece once
+(`pieces`: rings, area, compactness, width, convexity); the search's counts (`stats`). `max_states` keeps the first
+states in generation order and the path to every variant (`truncated` says how many it left out); `max_seconds`
+stops the search. It needs Python 3.12 or later. On the working set most searched pieces have tens of states; the
+largest, a core part of osm_0321, has 1,724 (2.9 s, 0.8 MB as JSON).
+
 ## Settings
 
 `ZoneConfig` holds every setting; the defaults are those of `OSM_2_Decomposition.ipynb`, with a time budget for the
@@ -185,9 +226,10 @@ and without it, the 990 buildings get the same zones. It bounds the buildings th
 `out_of_time`. osm_0517 fails in under 2 s without running out of time. The whole sample took 43 s on three
 processes instead of 573 s.
 
-`tests/test_convex_zones.py` checks the settings table, that the default engine settings are those of
-`OSM_2_Decomposition.ipynb`, a rectangle's zones and lines, the merge, the whole footprint, a footprint that cannot be
-cut, the order in which the pieces are searched, the time budget (the fallback stops and the engine's search stops
-at its limit), an engine that raises, and eight of the perimeter's test footprints
-(the zones tile them and none is narrower than 1.2 m); `tests/test_decomposition_fallback.py` the same fallback
-through `run_building_decomposition`.
+`tests/test_convex_zones.py` checks the settings table, the zones that need no search, the ranked variants and their
+terms, fingerprints, choices (kept, missing, and a zone merged away), the search tree (its variants and their states,
+determinism, `max_states`), that the default engine settings are those of `OSM_2_Decomposition.ipynb`, a rectangle's
+zones and lines, the merge, the whole footprint, a footprint that cannot be cut, the order in which the pieces are
+searched, the time budget (the fallback stops and the engine's search stops at its limit), an engine that raises, and
+eight of the perimeter's test footprints (the zones tile them and none is narrower than 1.2 m);
+`tests/test_decomposition_fallback.py` the same fallback through `run_building_decomposition`.
