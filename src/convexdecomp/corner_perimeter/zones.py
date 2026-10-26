@@ -395,6 +395,41 @@ def taker_across(zones: list[tuple[Polygon, str]], i: int, edge: LineString) -> 
     return max(shares)[1]
 
 
+def _cut_off_tip(z: Polygon, a: np.ndarray, b: np.ndarray, far: np.ndarray):
+    """Rule 9's cut of zone z at its corner a, on z's own ring. a and its neighbours b and far come from the cleaned
+    ring, which leaves out points the outline runs almost straight through; those points stay in z's ring and in the
+    tip. P is where the perpendicular from b meets z's ring on the way from a to far, so it lies exactly on that edge.
+    Returns the rest's ring (z with the tip replaced by P), the tip (from b along the ring through a to P) and P; None
+    when P would lie beyond far."""
+    ring = np.asarray(orient(z, 1.0).exterior.coords)[:-1]
+    n = len(ring)
+    ia, ib, ifar = (int(np.flatnonzero(np.all(ring == q, axis=1))[0]) for q in (a, b, far))
+    step = 1 if (ib - ia) % n < (ifar - ia) % n else -1      # the way round from a to b
+    w = unit(far - a)
+    s = (b - a) @ w                                           # how far P lies from a along a-far
+    if s > (far - a) @ w + 1e-12:
+        return None
+    to_b = [(ia + step * m) % n for m in range(1, (ib - ia) * step % n)]
+    to_p, prev, k = [], a, (ia - step) % n                    # the points from a towards far before P
+    while (ring[k] - a) @ w < s - 1e-12:
+        to_p.append(k)
+        prev, k = ring[k], (k - step) % n
+    q = ring[k]
+    d0, d1 = (prev - a) @ w, (q - a) @ w
+    p = prev + (s - d0) / (d1 - d0) * (q - prev) if d1 - d0 > 1e-15 else q
+    on_point = bool(np.linalg.norm(p - q) < 1e-9)             # P is the ring's next point itself
+    if on_point:
+        p = q
+    gone = {ia, *to_b, *to_p, *([k] if on_point else [])}
+    first = next(m for m in range(n) if m not in gone and (m - step) % n in gone)
+    kept = [(first + step * m) % n for m in range(n - len(gone))]
+    rest = [p, *(ring[m] for m in kept)]                      # P, then round from the first point kept
+    if step == -1:
+        rest = rest[::-1]
+    tip = [b, *(ring[m] for m in reversed(to_b)), a, *(ring[m] for m in to_p), p]
+    return rest, Polygon(tip), p
+
+
 def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
     """Rule 9: a zone corner A sharper than ``sharp_corner_deg`` is cut off along BP, from the far end B of the
     shorter edge AB straight across to the longer edge AC (P, the foot of the perpendicular).
@@ -402,8 +437,9 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
     within ``ACROSS_TOL``); the cut zone keeps the rest (A moves to P), and P is inserted into the zones whose edges
     it lies on, so the zones stay noded. A triangle goes whole to the zone taking the tip when the cut would leave a
     new corner sharper than the limit at B (its rest a similar triangle, cut again and again down to a point) or when
-    the merged zone is convex. Skipped when no zone lies across either edge or the result would be invalid. Returns
-    the zones, the cuts and the zones handed over whole."""
+    the merged zone is convex. The cut is made on the zone's own ring (:func:`_cut_off_tip`), so P lies on the edge
+    the zone across AC shares. Skipped when no zone lies across either edge, or the result would be invalid or not
+    keep every area exact. Returns the zones, the cuts and the zones handed over whole."""
     zones = list(zones)
     cuts: list[LineString] = []
     whole: list[Polygon] = []
@@ -422,14 +458,16 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
         tried.add(key)
         a, x, y = c[t], c[t - 1], c[(t + 1) % len(c)]
         b, far = (x, y) if np.linalg.norm(x - a) <= np.linalg.norm(y - a) else (y, x)
-        w = unit(far - a)
-        p = a + ((b - a) @ w) * w
+        cut = _cut_off_tip(zones[i][0], a, b, far)
+        if cut is None:
+            continue
+        rest_ring, tip, p = cut
         j = taker_across(zones, i, LineString([a, b]))
         if j is None:  # the shorter edge is on the outline: the zone across the longer edge takes the tip
             j = taker_across(zones, i, LineString([a, p]))
             if j is None:
                 continue  # nobody to take the tip
-        rest = Polygon(np.vstack([c[:t], [p], c[t + 1:]]), [h.coords for h in zones[i][0].interiors])
+        rest = Polygon(rest_ring, [h.coords for h in zones[i][0].interiors])
         rc, rest_angles = convex_corners(rest)
         at_b = [angle for angle, s in rest_angles if np.linalg.norm(rc[s] - b) < 1e-9]
         whole_taker = one_polygon(shapely.union_all([zones[j][0], zones[i][0]])) \
@@ -441,9 +479,12 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
             whole.append(zones[i][0])
             del zones[i]
             continue
-        taker = shapely.union_all([zones[j][0], Polygon([a, b, p])])
+        taker = shapely.union_all([zones[j][0], tip])
         if not rest.is_valid or rest.area <= 0 or taker.geom_type != "Polygon" or not taker.is_valid:
             continue
+        area = zones[i][0].area
+        if abs(rest.area + tip.area - area) > 1e-9 * area or abs(taker.area - zones[j][0].area - tip.area) > 1e-9 * area:
+            continue  # the cut would leave a gap or an overlap
         if cfg.sharp_keep_convex and is_convex(zones[j][0]) and not is_convex(taker):
             continue  # the zone taking the tip would lose its convexity
         zones[i] = (rest, kind_of(rest, zones[i][1], cfg.min_zone_width_m))

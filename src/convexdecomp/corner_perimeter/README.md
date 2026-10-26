@@ -293,9 +293,11 @@ eight times.
 **Rule 9: sharp corners are cut off.** A zone corner sharper than `sharp_corner_deg` is cut off; the zone along most
 of its shorter edge takes the tip, or the zone across the longer edge when the shorter one is on the outline. A
 triangle goes whole to that zone instead when the cut would leave a new sharp corner (its rest a similar triangle,
-cut again and again) or when the merged zone is convex. With `sharp_keep_convex`, a cut that would make a convex
-taker non-convex is skipped. Then, with `repeat_thin_after_sharp`, rules 7 and 8 once more for the thin zones the
-cuts leave.
+cut again and again) or when the merged zone is convex. The cut is made on the zone's own outline: points it runs
+almost straight through stay, and the cut's end lies on the zone's edge, so the zone across that edge gets the point
+inserted and the zones still tile the footprint; a cut that would not keep every area exact is skipped. With
+`sharp_keep_convex`, a cut that would make a convex taker non-convex is skipped. Then, with
+`repeat_thin_after_sharp`, rules 7 and 8 once more for the thin zones the cuts leave.
 
 ![Rule 9](figures/perimeter_sharp_corners.svg)
 
@@ -463,7 +465,8 @@ below. Values outside `ge`/`le` raise `ValueError`.
 ## What a result holds
 
 `PerimeterResult` keeps the footprint (`poly`), the settings (`config`), `upto`, the `zones` (`(polygon, kind)` pairs
-that tile the footprint) and what each step made, in the order the steps run:
+that tile the footprint: a gap or an overlap larger than a millionth of the footprint's area raises `PerimeterError`)
+and what each step made, in the order the steps run:
 
 - which corners cast rays: `corners` (the corners that cast rays, as `(point, direction, interior angle, ring)`),
   `wing_ends` and `bay_corners` (those that did not), `wing_ends_restored` and `bays_restored` (given their rays
@@ -506,12 +509,12 @@ footprints), with the default settings, and with rays from every corner (`wing_e
 
 | | Rays from every corner | Defaults |
 | --- | --- | --- |
-| Perimeter zones | 7,333 | 7,249 |
+| Perimeter zones | 7,334 | 7,250 |
 | Zones thinner than 2 m (footprints with any) | 175 (94) | 92 (73) |
-| Zones not convex (footprints with any) | 369 (247) | 362 (241) |
+| Zones not convex (footprints with any) | 368 (246) | 361 (240) |
 | Corners under 20° | 0 | 0 |
 | Specks under 0.5 m² | 0 | 0 |
-| Footprints with none of these | 700 | 721 |
+| Footprints with none of these | 701 | 722 |
 | Footprints without a core | 363 | 363 |
 
 The thin zones that stay are small: median 5.2 m² and 1.53 m wide, together 0.2 % of the perimeter zones' area.

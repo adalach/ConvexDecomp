@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import math
 import sys
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import numpy as np
@@ -131,6 +131,20 @@ def test_rule9_hands_a_cascading_triangle_over_whole():
     zones, cuts, whole = cut_sharp_corners([(below, "zone"), (triangle, "zone"), (above, "zone")], CornerRayConfig())
     assert len(zones) == 2 and len(whole) == 1 and not cuts
     assert sharp_corners(zones) == 0 and abs(sum(z.area for z, _ in zones) - 70.0) < 1e-9
+
+
+def test_rule9_keeps_points_the_outline_runs_almost_straight_through():
+    # The long edge of the sharp corner at (0, 0) bends by 0.03 degrees at v, a point it shares with the zone below.
+    v = (10.0, -0.005)
+    zones = [(Polygon([(0, 0), (4, 1), (20, 6), (20, 10), (0, 10)]), "zone"),
+             (Polygon([(0, 0), v, (20, 0), (20, 6), (4, 1)]), "zone"),
+             (Polygon([(0, 0), (0, -5), (20, -5), (20, 0), v]), "zone")]
+    out, cuts, _ = cut_sharp_corners(zones, replace(CornerRayConfig(), sharp_keep_convex=False))
+    union = union_all([z for z, _ in out])
+    assert len(cuts) == 1
+    assert union.symmetric_difference(box(0, -5, 20, 10)).area < 1e-9
+    assert math.isclose(sum(z.area for z, _ in out), union.area, abs_tol=1e-9)
+    assert all(v in z.exterior.coords for z, _ in out[1:])
 
 
 def test_zone_across_within_rounding():

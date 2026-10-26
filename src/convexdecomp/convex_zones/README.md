@@ -162,23 +162,22 @@ perimeter first, with `perimeter=CornerRayConfig(...)`):
 
 On the 990 footprints of the BEM4AI sample's working set (`data/bem4ai/subset_buildings_gdf.pkl`, written by
 `OSM_1_Preprocessing.ipynb`), with the defaults, `decompose_zones` on each footprint's corner-ray zones gives the
-zones `OSM_2_Decomposition.ipynb` saved in `osm_zones.gpkg`, zone for zone, and so does
-`run_building_decomposition(..., fallback="merge")`, which runs this package:
+same zones as `run_building_decomposition(..., fallback="merge")`, which runs this package:
 
 | | Buildings |
 | --- | --- |
 | Fully convex | 988 |
-| Without a fallback | 923 |
-| After merging (76 merges) | 67 |
+| Without a fallback | 924 |
+| After merging (76 merges) | 66 |
 | After decomposing the whole footprint | 0 |
 | Without a decomposition | 2 (osm_0517, osm_0719) |
 
-They have 9,048 convex zones: a median of 7 per building and at most 54 (208 buildings have more than 12, 41 more
-than 24); none narrower than 1.2 m, 319 narrower than 2 m, 232 under 5 m² and 10 under 2 m² (convex zones of the
+They have 9,049 convex zones: a median of 7 per building and at most 54 (208 buildings have more than 12, 41 more
+than 24); none narrower than 1.2 m, 319 narrower than 2 m, 231 under 5 m² and 10 under 2 m² (convex zones of the
 perimeter that small, which no cut made).
 
 **Time.** The perimeter and the zones of one building together, on three processes at a load average of 7 to 14:
-a median of 0.03 s, 90 % within 0.2 s and 99 % within 2.3 s; the slowest building that decomposes took 6.0 s
+a median of 0.03 s, 90 % within 0.23 s and 99 % within 2.7 s; the slowest building that decomposes took 6.6 s
 (osm_0798, after one merge; 2.8 s on a quiet machine). The slowest fallback that succeeds took 3.0 s at a load
 average of about 10 (osm_0798 again; the next 1.2 s), so the 10 s budget changes no building that decomposes: with
 and without it, the 990 buildings get the same zones. It bounds the buildings that fail: without it, osm_0719 took

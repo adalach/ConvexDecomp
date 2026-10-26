@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import shapely
 from shapely.geometry import LineString, MultiPoint, Polygon
 
 from .core import narrow_core_to_lines
@@ -65,6 +66,8 @@ STAGE_TITLES = {s.key: f"Rule {s.rule}: {s.title[0].lower()}{s.title[1:]}" if s.
 TIDIED = ("snapped", "merged_again", "straightened", "collinear_dropped")
 #: rules 9, 7, 8, 10 and the tidy step repeat at most this often (``repeat_until_stable``)
 MAX_ROUNDS = 8
+#: the zones must tile the footprint: no gap and no overlap larger than this share of its area
+TILE_TOL = 1e-6
 #: what the wing-end and bay checks count as bad: thin, non-convex and sharp zones and specks
 BAD = ("thin", "not_convex", "sharp_20", "specks")
 
@@ -267,8 +270,10 @@ def _perimeter(poly: Polygon, cfg: CornerRayConfig, upto: str | None, skip: tupl
 
     # rules 9, 7, 8 and 10 and the tidy step, repeated until the zones no longer change
     r.zones = _final_rounds(poly, zones, cfg, on, r)
-    if abs(sum(z.area for z, _ in r.zones) - poly.area) >= 1e-3 * poly.area:
-        raise PerimeterError("the zones do not tile the footprint")
+    union = shapely.union_all([z for z, _ in r.zones])
+    gap, overlap = poly.symmetric_difference(union).area, sum(z.area for z, _ in r.zones) - union.area
+    if max(gap, overlap) > TILE_TOL * poly.area:
+        raise PerimeterError(f"the zones do not tile the footprint: {gap:.4f} m2 gap, {overlap:.4f} m2 overlap")
     return r
 
 

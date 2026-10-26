@@ -111,14 +111,14 @@ commit.
 
 **On ConvexDecomp's sample** (the 990 footprints of `data/bem4ai/subset_buildings_gdf.pkl`, local, the sample's
 `osm_` ids; the working set the perimeter's hand-off counts on), with the defaults: 988 buildings fully
-convex, 923 of them without a fallback and 67 after 76 merges, the whole footprint never needed; osm_0517 and
-osm_0719 have no decomposition. This is exactly what `OSM_2_Decomposition.ipynb` gives, zone for zone. 9,048 convex
-zones, a median of 7 per building and at most 54: **41 buildings have more than 24 zones** (the workbench's
+convex, 924 of them without a fallback and 66 after 76 merges, the whole footprint never needed; osm_0517 and
+osm_0719 have no decomposition. `run_building_decomposition` (the OSM notebook's step) gives the same, zone for zone.
+9,049 convex zones, a median of 7 per building and at most 54: **41 buildings have more than 24 zones** (the workbench's
 `max_zones_per_building` would drop them) and 208 more than 12 (where `S9` would retry a failing building whole).
-No zone is narrower than 1.2 m; 319 are narrower than 2 m and 232 smaller than 5 m².
+No zone is narrower than 1.2 m; 319 are narrower than 2 m and 231 smaller than 5 m².
 
 **Time.** Perimeter and zones of one building together, at a load average of 7 to 14: a median of 0.03 s, 99 %
-within 2.3 s, the slowest building that decomposes 6.0 s. The fallback's budget (`fallback_max_seconds`, 10 s by
+within 2.7 s, the slowest building that decomposes 6.6 s. The fallback's budget (`fallback_max_seconds`, 10 s by
 default; Agata asked for it on 2026-10-26) changes no building that decomposes: the slowest fallback that succeeds
 takes 3.0 s on a busy machine, and with and without the budget the 990 buildings get the same zones. It bounds the
 buildings that fail: osm_0719 took 462 s without it and takes 11 s with it (`decomposition_failed` with
