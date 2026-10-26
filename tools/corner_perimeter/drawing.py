@@ -30,8 +30,10 @@ from convexdecomp.corner_perimeter.rays import cast, corners, to_band, trim  # n
 
 #: the 990-footprint sample every number of the method was measured on (a snapshot, local metres)
 SAMPLE = ROOT / "temp" / "perimeter" / "subset_snapshot.pkl"
+#: the map from the shipped sample's ids to BEM4AI's (local, ``tools/anonymize_bem4ai_sample.py``)
+ID_MAP = ROOT / "data" / "bem4ai" / "sample_ids.csv"
 #: the three test footprints of the method
-TEST_IDS = ("Valdemoro_0001", "Krakow_0013", "Bognor_Regis_0005")
+TEST_IDS = ("osm_0499", "osm_0699", "osm_0353")
 
 RAY_CONVEX, RAY_REFLEX = "#fd8d3c", "#d94801"
 BAND_FILL, BAND_LINE = "#deebf7", "#2171b5"
@@ -75,13 +77,22 @@ ZONE_KEYS = ["outline", "zone", "thin", "nonconvex", "core"]
 
 
 def sample(path: Path | str = SAMPLE) -> pd.DataFrame:
-    """The footprint sample, indexed by sample id (a pickled frame or a GeoPackage with ``sample_id``)."""
+    """The footprint sample, indexed by sample id (a pickled frame or a GeoPackage with ``sample_id``).
+
+    A table keyed by BEM4AI's ids, like the snapshot, gets the ``osm_`` ids of the shipped sample from
+    ``data/bem4ai/sample_ids.csv`` (written by ``tools/anonymize_bem4ai_sample.py``).
+    """
     path = Path(path)
     if path.suffix == ".gpkg":
         import geopandas as gpd
 
-        return gpd.read_file(path).set_index("sample_id")
-    return pd.read_pickle(path).set_index("sample_id")
+        frame = gpd.read_file(path).set_index("sample_id")
+    else:
+        frame = pd.read_pickle(path).set_index("sample_id")
+    if ID_MAP.exists() and not frame.index.str.startswith("osm_").all():
+        ids = pd.read_csv(ID_MAP).set_index("bem4ai_sample_id")["sample_id"]
+        frame = frame.rename(index=ids)
+    return frame
 
 
 def letter(ax, i: int) -> None:

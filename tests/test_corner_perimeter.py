@@ -44,29 +44,29 @@ OFF = dict(short_wall_one_ray=False, bays=False, snap_to_outline=False, merge_cl
 
 #: zones, core parts, thin, not convex, corners under 20 degrees, wing-end corners, with the defaults
 EXPECTED = {
-    "Valdemoro_0001": (40, 3, 0, 7, 0, 0),    # two bay corners, tidied corners
-    "Krakow_0013": (27, 2, 0, 4, 0, 8),       # two short walls
-    "Bognor_Regis_0005": (35, 2, 0, 2, 0, 4),  # six bay corners, four short walls
-    "Angers_0018": (4, 0, 0, 0, 0, 2),
-    "Liverpool_0042": (14, 1, 0, 0, 0, 0),    # tidy snaps a corner to the outline and splits a pinched zone
-    "Bucharest_0003": (20, 1, 0, 1, 0, 0),    # its two round bays are one zone each
-    "Derby_0029": (3, 0, 0, 0, 0, 0),
-    "Caen_0016": (21, 1, 0, 3, 0, 0),
-    "Athens_0005": (10, 0, 0, 1, 0, 0),
+    "osm_0499": (40, 3, 0, 7, 0, 0),    # two bay corners, tidied corners
+    "osm_0699": (27, 2, 0, 4, 0, 8),       # two short walls
+    "osm_0353": (35, 2, 0, 2, 0, 4),  # six bay corners, four short walls
+    "osm_0351": (4, 0, 0, 0, 0, 2),
+    "osm_0738": (14, 1, 0, 0, 0, 0),    # tidy snaps a corner to the outline and splits a pinched zone
+    "osm_0377": (20, 1, 0, 1, 0, 0),    # its two round bays are one zone each
+    "osm_0915": (3, 0, 0, 0, 0, 0),
+    "osm_0719": (21, 1, 0, 3, 0, 0),
+    "osm_0656": (10, 0, 0, 1, 0, 0),
 }
 
 #: the same with OFF
 EXPECTED_OFF = {
-    "Valdemoro_0001": (40, 3, 1, 8, 0, 0),
-    "Krakow_0013": (28, 2, 1, 6, 0, 8),
-    "Bognor_Regis_0005": (38, 2, 0, 2, 0, 4),
-    "Angers_0018": (4, 0, 0, 0, 0, 2),
+    "osm_0499": (40, 3, 1, 8, 0, 0),
+    "osm_0699": (28, 2, 1, 6, 0, 8),
+    "osm_0353": (38, 2, 0, 2, 0, 4),
+    "osm_0351": (4, 0, 0, 0, 0, 2),
     # footprints that show one rule or check at work
-    "Liverpool_0042": (13, 1, 0, 1, 0, 0),    # rule 9 hands a 38.8 m² triangle over whole
-    "Bucharest_0003": (27, 1, 0, 1, 0, 0),    # rule 7: the hull would leave its neighbour 1.52 m wide
-    "Derby_0029": (3, 0, 0, 0, 0, 0),         # the wing-end check gives the narrow part's end its rays back
-    "Caen_0016": (23, 1, 1, 5, 0, 0),         # rule 10: three specks join a neighbour
-    "Athens_0005": (11, 0, 1, 2, 0, 0),       # rule 9: two zones share the shorter edge; the longer share takes it
+    "osm_0738": (13, 1, 0, 1, 0, 0),    # rule 9 hands a 38.8 m² triangle over whole
+    "osm_0377": (27, 1, 0, 1, 0, 0),    # rule 7: the hull would leave its neighbour 1.52 m wide
+    "osm_0915": (3, 0, 0, 0, 0, 0),         # the wing-end check gives the narrow part's end its rays back
+    "osm_0719": (23, 1, 1, 5, 0, 0),         # rule 10: three specks join a neighbour
+    "osm_0656": (11, 0, 1, 2, 0, 0),       # rule 9: two zones share the shorter edge; the longer share takes it
 }
 
 
@@ -102,7 +102,7 @@ def test_real_footprints():
 
 
 def test_wing_ends_on_a_narrow_leg():
-    poly = footprints()["Angers_0018"]
+    poly = footprints()["osm_0351"]
     with_rays = corner_ray_perimeter(poly, CornerRayConfig(**OFF, wing_end_max_m=0.0))
     assert counts(with_rays) == (6, 0, 4, 0, 0, 0)  # the leg's end rays split it into strips under 2 m
     assert counts(corner_ray_perimeter(poly)) == (4, 0, 0, 0, 0, 2)
@@ -114,13 +114,13 @@ def test_rules_and_checks_on_their_footprints():
     def run(sid, **changes):
         return corner_ray_perimeter(f[sid], CornerRayConfig(**{**OFF, **changes}))
 
-    assert run("Liverpool_0042").counts()["sharp_whole"] == 1
-    assert counts(run("Bucharest_0003", hull_keeps_width=False)) == (27, 1, 1, 0, 0, 0)  # neighbour left 1.52 m wide
-    derby = run("Derby_0029")
+    assert run("osm_0738").counts()["sharp_whole"] == 1
+    assert counts(run("osm_0377", hull_keeps_width=False)) == (27, 1, 1, 0, 0, 0)  # neighbour left 1.52 m wide
+    derby = run("osm_0915")
     assert derby.counts()["wing_ends_restored"] == 2 and not derby.wing_ends
-    assert counts(run("Derby_0029", wing_end_check=False)) == (4, 0, 1, 0, 0, 2)
-    assert run("Caen_0016", join_specks=False).counts()["specks"] == 2
-    assert run("Caen_0016").counts()["specks_joined"] == 3
+    assert counts(run("osm_0915", wing_end_check=False)) == (4, 0, 1, 0, 0, 2)
+    assert run("osm_0719", join_specks=False).counts()["specks"] == 2
+    assert run("osm_0719").counts()["specks_joined"] == 3
 
 
 def test_rule9_hands_a_cascading_triangle_over_whole():
@@ -189,14 +189,14 @@ def test_bays():
 
 def test_bays_on_real_footprints():
     bays = CornerRayConfig(**{**OFF, "bays": True})
-    # Bucharest's two round bays (9.1 m wide, 5 m deep, 11 and 12 corners) each become one zone, and a 2-corner
+    # osm_0377's two round bays (9.1 m wide, 5 m deep, 11 and 12 corners) each become one zone, and a 2-corner
     # bump loses its rays too: 27 zones become 20
-    poly = footprints()["Bucharest_0003"]
+    poly = footprints()["osm_0377"]
     result = corner_ray_perimeter(poly, bays)
     assert counts(result)[:5] == (20, 1, 0, 1, 0) and result.counts()["bay_corners"] == 25
     check_tiling(poly, result)
-    # Krakow's and Angers' wing ends stay wing ends, and nothing else of them changes
-    for sid in ("Krakow_0013", "Angers_0018"):
+    # osm_0699's and osm_0351's wing ends stay wing ends, and nothing else of them changes
+    for sid in ("osm_0699", "osm_0351"):
         assert counts(corner_ray_perimeter(footprints()[sid], bays)) == EXPECTED_OFF[sid]
 
 
@@ -208,7 +208,7 @@ def test_simple_shapes():
 
 
 def test_stages():
-    poly = footprints()["Krakow_0013"]
+    poly = footprints()["osm_0699"]
     for stage in STAGES:
         check_tiling(poly, corner_ray_perimeter(poly, upto=stage))
     for bad in (dict(upto="nowhere"), dict(skip=("nowhere",))):
@@ -220,7 +220,7 @@ def test_stages():
 
 
 def test_deterministic():
-    poly = footprints()["Valdemoro_0001"]
+    poly = footprints()["osm_0499"]
     a, b = corner_ray_perimeter(poly), corner_ray_perimeter(poly)
     assert [(z.wkb, k) for z, k in a.zones] == [(z.wkb, k) for z, k in b.zones]
 
@@ -245,7 +245,7 @@ def test_settings():
 
 
 def test_preview():
-    got = preview(footprints()["Bognor_Regis_0005"])
+    got = preview(footprints()["osm_0353"])
     assert got["fate"] == {"status": "kept"}
     assert set(got["layers"]) == set(LAYERS["before"]) | set(LAYERS["after"])
     assert [k for k, _, _ in NUMBERS] == list(got["numbers"])

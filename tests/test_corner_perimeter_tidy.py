@@ -59,11 +59,11 @@ def test_tidy_on_the_test_footprints():
         check_tiling(poly, result)
         got = result.counts()
         assert all(got[k] <= base[k] for k in keys), (sid, base, got)
-    liverpool = corner_ray_perimeter(footprints()["Liverpool_0042"], CornerRayConfig(**{**OFF, **TIDY})).counts()
+    liverpool = corner_ray_perimeter(footprints()["osm_0738"], CornerRayConfig(**{**OFF, **TIDY})).counts()
     assert (liverpool["zones"], liverpool["not_convex"], liverpool["snapped"]) == (14, 0, 1)  # the L-shape splits
 
 
 def test_tidy_off_changes_nothing():
-    poly = footprints()["Valdemoro_0001"]
+    poly = footprints()["osm_0499"]
     result = corner_ray_perimeter(poly, CornerRayConfig(**OFF))
     assert all(not v for v in result.tidied.values())

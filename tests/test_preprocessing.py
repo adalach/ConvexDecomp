@@ -102,7 +102,7 @@ def test_iou_of_outlines_that_differ_by_rounding_noise_is_one():
 
 # -------------------------------------------------------------------------------------------- local frame
 def test_local_frame_projects_and_centres_the_bounding_box():
-    square = box(11.575, 48.137, 11.5753, 48.1372)  # in Munich, WGS84
+    square = box(11.575, 48.137, 11.5753, 48.1372)  # a small square in WGS84
     gdf = gpd.GeoDataFrame({"metric_crs": ["EPSG:32632"], "geometry_bem4ai": gpd.GeoSeries([square], crs="EPSG:4326")},
                            geometry=[square], crs="EPSG:4326")
     out = to_local_frames(gdf, {"geometry": "geom_local_raw", "geometry_bem4ai": "geom_local_bem4ai"})

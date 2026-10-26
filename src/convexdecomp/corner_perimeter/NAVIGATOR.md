@@ -46,7 +46,7 @@ the perimeter gives 7,338 zones (107 thinner than 2 m, 371 not convex) and 689 c
 alone leaves 69 buildings with a zone the search cannot cut; with OSM_2's fallback
 (`run_building_decomposition(..., fallback="merge")`: such a zone is merged with a neighbouring zone and the union
 decomposed, else the whole footprint) 988 of 990 buildings are fully convex, 67 of them after merging (76 merges), no
-area lost; Caen_0016 and Zaragoza_0026 have no decomposition. Whether the workbench's
+area lost; osm_0719 and osm_0517 have no decomposition. Whether the workbench's
 Zones takes the same is Agata's decision.
 
 ## The page

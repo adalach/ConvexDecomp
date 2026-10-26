@@ -95,7 +95,7 @@ def _min_rotated_rect_dims(geom) -> tuple[float, float]:
 
     GEOS's ``oriented_envelope``, as BEM4AI measures it. GEOS 3.13 can return a rectangle smaller
     than the convex hull, down to zero width, when hull points are collinear, as they are on an
-    outline snapped to its axes (Boulogne_sur_Mer_0019); then every hull edge direction is tried
+    outline snapped to its axes (osm_0426); then every hull edge direction is tried
     instead (one side of the minimum-area rectangle lies on a hull edge).
     """
     try:

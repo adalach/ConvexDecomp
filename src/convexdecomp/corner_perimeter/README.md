@@ -116,18 +116,18 @@ ray, except:
 
 ![Wing ends](../../../docs/corner_perimeter/perimeter_wing_ends.svg)
 
-*Angers_0018's leg, 2.8 m wide: (a, b) rays and zones with rays from the two corners of its end wall, (c, d)
+*osm_0351's leg, 2.8 m wide: (a, b) rays and zones with rays from the two corners of its end wall, (c, d)
 without them.*
 
 ![Short walls](../../../docs/corner_perimeter/perimeter_short_walls.svg)
 
-*Short steps (Dordrecht_0010, top) and a chamfer (Brussels_0025, bottom): rays and zones with two rays per short
+*Short steps (osm_0379, top) and a chamfer (osm_0423, bottom): rays and zones with two rays per short
 wall (a, b, e, f) and with one (c, d, g, h). Crosses mark the corners without a ray of their own, circles where the
 one ray starts.*
 
 ![Bays](../../../docs/corner_perimeter/perimeter_bays.svg)
 
-*Enschede_0004's polygonal bay (top) and Bucharest_0003's round bay (bottom): rays and zones without the bay rule
+*osm_0900's polygonal bay (top) and osm_0377's round bay (bottom): rays and zones without the bay rule
 (a, b, e, f) and with it (c, d, g, h). Circles mark the bay corners without rays.*
 
 **Code:** `rays.corners`; `sources.ray_sources` (`wing_end_pairs`, `bay_runs`, `short_wall_plan`) decides,
@@ -143,7 +143,7 @@ first ray it reaches: all rays grow at the same speed, and two arriving within `
 
 ![Band and corner rays](../../../docs/corner_perimeter/perimeter_rays_and_band.svg)
 
-*Krakow_0013: (a) every ray to the facade, (b) rays stopped by the first ray, (c) rays cut at the band line.*
+*osm_0699: (a) every ray to the facade, (b) rays stopped by the first ray, (c) rays cut at the band line.*
 
 **Code:** `rays.offset_band` (with `sources.bay_caps`), `rays.cast`, `rays.to_band`; the stopping is `rays.trim`,
 called by rule 3. Stages `band` and `rays`. Settings: Band and rays.
@@ -155,7 +155,7 @@ other's corner become one line from corner to corner. Decided on the rays as cas
 
 ![Rule 2](../../../docs/corner_perimeter/perimeter_opposite_rays.svg)
 
-*Valdemoro_0001's connector, (a) before and (b) after.*
+*osm_0499's connector, (a) before and (b) after.*
 
 **Code:** `lines.join_opposite_rays`, with the pairs from `lines.opposite_pairs`. Stage `opposite`. Settings:
 `opposite_gap_m`, `opposite_angle_deg`.
@@ -168,7 +168,7 @@ facade. A ray that the ray of a neighbouring corner ends on is kept, as the two 
 
 ![Rule 3](../../../docs/corner_perimeter/perimeter_discarded_rays.svg)
 
-*Bognor_Regis_0005's left end, (a) before and (b) after.*
+*osm_0353's left end, (a) before and (b) after.*
 
 **Code:** `lines.stop_rays`. Stage `discard`. No settings of its own; the second part below decides which rays
 come back.
@@ -180,7 +180,7 @@ directions to the first line it meets.
 
 ![Rule 1](../../../docs/corner_perimeter/perimeter_merged_rays.svg)
 
-*Krakow_0013's lower wing with two bays, (a) before and (b) after.*
+*osm_0699's lower wing with two bays, (a) before and (b) after.*
 
 **Code:** `lines.merge_meeting_rays`. Stage `merge_rays`. No settings.
 
@@ -203,12 +203,12 @@ never vanishes: it becomes a line.
 
 ![Rule 4, legs](../../../docs/corner_perimeter/perimeter_narrow_core_legs.svg)
 
-*Legs: Krakow_0013's lower wing (a, b) and Bognor_Regis_0005's left core arm (c, d), before and after; the dashed
+*Legs: osm_0699's lower wing (a, b) and osm_0353's left core arm (c, d), before and after; the dashed
 line is the band line as offset.*
 
 ![Rule 4, narrow parts](../../../docs/corner_perimeter/perimeter_narrow_core_parts.svg)
 
-*Narrow parts: Exeter_0008's left wing, Alicante_0030's core and Valdemoro_0001's lower right wing, one per row:
+*Narrow parts: osm_0846's left wing, osm_0812's core and osm_0499's lower right wing, one per row:
 the zones with narrow parts left as they are (a, d, g), the lines with the parts that became lines in pink (b, e,
 h), and the zones (c, f, i).*
 
@@ -228,7 +228,7 @@ Zone corners closer than `close_points_m` become one point at their mean. Points
 
 ![Rule 5](../../../docs/corner_perimeter/perimeter_close_points.svg)
 
-*Krakow_0013's bottom-left, (a) before and (b) after.*
+*osm_0699's bottom-left, (a) before and (b) after.*
 
 **Code:** `zones.merge_close_points` (groups from `geometry.close_groups`). Stage `close_points`. Settings:
 `close_points_m`.
@@ -240,7 +240,7 @@ to its shorter diagonal.
 
 ![Rule 6](../../../docs/corner_perimeter/perimeter_diagonals.svg)
 
-*Krakow_0013's lower wing (a, b) and Valdemoro_0001's left wing (c, d), before and after.*
+*osm_0699's lower wing (a, b) and osm_0499's left wing (c, d), before and after.*
 
 **Code:** `zones.narrow_zones_to_diagonals`. Stage `diagonals`. Settings: `narrow_zone_m`.
 
@@ -250,7 +250,7 @@ Rule 5 once more with `corner_group_m`, in groups at most `corner_group_span_m` 
 
 ![Rule 5 again](../../../docs/corner_perimeter/perimeter_corner_groups.svg)
 
-*Valdemoro_0001's upper core (a, b) and Bognor_Regis_0005's upper wing (c, d), before and after.*
+*osm_0499's upper core (a, b) and osm_0353's upper wing (c, d), before and after.*
 
 **Code:** `zones.merge_close_points`. Stage `corner_groups`. Settings: `corner_group_m`, `corner_group_span_m`.
 
@@ -263,12 +263,12 @@ zone it thins; otherwise the zones merge without the hull, into a zone that is n
 
 ![Rule 7](../../../docs/corner_perimeter/perimeter_thin_touching.svg)
 
-*Wroclaw_0046's wing end, Riga_0034's rounded bay and La_Linea_de_la_Concepcion_0016, one per row, before and
+*osm_0357's wing end, osm_0192's rounded bay and osm_0307, one per row, before and
 after.*
 
 ![Rule 7, width check](../../../docs/corner_perimeter/perimeter_thin_touching_width.svg)
 
-*Bucharest_0003's rounded bay: (a) before rule 7, (b) with the hull, which would leave its neighbour 1.52 m wide,
+*osm_0377's rounded bay: (a) before rule 7, (b) with the hull, which would leave its neighbour 1.52 m wide,
 (c) merged without it.*
 
 **Code:** `zones.merge_touching_thin_zones`. Stage `thin_touching`. Settings: `min_zone_width_m`,
@@ -281,7 +281,7 @@ edge to a zone corner within `relink_m` if needed.
 
 ![Rule 8](../../../docs/corner_perimeter/perimeter_thin_lone.svg)
 
-*Almere_0021 (a, b) and Bognor_Regis_0005's lower wing (c, d), before and after.*
+*osm_0623 (a, b) and osm_0353's lower wing (c, d), before and after.*
 
 **Code:** `zones.merge_lone_thin_zones`. Stage `thin_lone`. Settings: `relink_m`.
 
@@ -299,11 +299,11 @@ cuts leave.
 
 ![Rule 9](../../../docs/corner_perimeter/perimeter_sharp_corners.svg)
 
-*Krakow_0013's bottom-left end (a, b) and Caen_0016 (c, d), before and after.*
+*osm_0699's bottom-left end (a, b) and osm_0719 (c, d), before and after.*
 
 ![Rule 9, who takes the tip](../../../docs/corner_perimeter/perimeter_sharp_takers.svg)
 
-*Liverpool_0042, where a triangle goes whole to its neighbour (its outline dashed after, b), and Strasbourg_0020,
+*osm_0738, where a triangle goes whole to its neighbour (its outline dashed after, b), and osm_0707,
 where the shorter edge lies on the outline (c, d).*
 
 **Rule 10: specks join a neighbour.** With `join_specks`, a perimeter zone under `speck_m2` joins the neighbour it
@@ -311,7 +311,7 @@ shares the longest edge with, convex or not.
 
 ![Rule 10](../../../docs/corner_perimeter/perimeter_specks.svg)
 
-*Brussels_0025's chamfer (a, b) and Bari_0003's step (c, d), before and after.*
+*osm_0423's chamfer (a, b) and osm_0072's step (c, d), before and after.*
 
 **Tidy zone corners.** Inner zone corners closer than `tidy_close_m` to an outline point move onto it
 (`snap_to_outline`); inner corners closer than `tidy_close_m` become one, in groups at most `corner_group_span_m`
@@ -326,8 +326,8 @@ makes touch itself becomes two zones if both are convex.
 
 ![Tidy](../../../docs/corner_perimeter/perimeter_tidy.svg)
 
-*Without and with the tidy step: a corner straightened (Bonn_0008), close points merged once more (Liege_0045), and
-a point rule 9 made merged with its neighbour (Besancon_0001). Squares mark points snapped to the outline, circles
+*Without and with the tidy step: a corner straightened (osm_0560), close points merged once more (osm_0270), and
+a point rule 9 made merged with its neighbour (osm_0427). Squares mark points snapped to the outline, circles
 points merged, diamonds points straightened.*
 
 **Code:** `procedure._final_rounds` runs the round: `zones.cut_sharp_corners` (the taker: `zones.taker_across`),
@@ -344,7 +344,7 @@ bays left together. A try is kept when the footprint's thin, non-convex and shar
 
 ![Wing-end check](../../../docs/corner_perimeter/perimeter_wing_end_check.svg)
 
-*Stepped blocks whose narrow end gets its rays back (Derby_0029, Aldershot_0005): without the check (a, c) and with
+*Stepped blocks whose narrow end gets its rays back (osm_0915, osm_0395): without the check (a, c) and with
 it (b, d); crosses mark the wing-end corners without rays.*
 
 **Code:** `procedure._check_ray_sources`. Settings: `wing_end_check`, `bay_check`.
@@ -353,7 +353,7 @@ it (b, d); crosses mark the wing-end corners without rays.*
 
 ![Result](../../../docs/corner_perimeter/perimeter_final_zones.svg)
 
-*The three test footprints with the default settings: Valdemoro_0001, Krakow_0013 and Bognor_Regis_0005.*
+*The three test footprints with the default settings: osm_0499, osm_0699 and osm_0353.*
 
 ## Settings
 
@@ -515,8 +515,8 @@ footprints), with the default settings, and with rays from every corner (`wing_e
 | Footprints without a core | 363 | 363 |
 
 The thin zones that stay are small: median 5.2 m² and 1.53 m wide, together 0.2 % of the perimeter zones' area.
-Rule 4 leaves no core thinner than 1.2 m, but rule 5 again can still thin a small core part afterwards (Pisa_0019 and
-Povoa_de_Varzim_0014, about 1 m² each).
+Rule 4 leaves no core thinner than 1.2 m, but rule 5 again can still thin a small core part afterwards (osm_0472 and
+osm_0568, about 1 m² each).
 
 `tests/test_corner_perimeter.py` checks nine real footprints (`tests/data/corner_perimeter_footprints.json`: their
 counts with the defaults and with the short walls, bays and tidy step switched off, the tiling, that no outline

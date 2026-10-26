@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The figures of the Obsidian note "Convex Decomposition Perimeter": one per step, before and after, zoomed on
-examples of the footprint sample (the three test footprints, Angers_0018, Derby_0029, Aldershot_0005, Dordrecht_0010,
-Enschede_0004, Exeter_0008, Alicante_0030, Wroclaw_0046, Riga_0034, La_Linea_de_la_Concepcion_0016, Bucharest_0003,
-Almere_0021, Caen_0016, Liverpool_0042, Strasbourg_0020, Brussels_0025, Bari_0003, Besancon_0001, Liege_0045 and
-Bonn_0008). The figures of the wing ends and rules 1 to 10 are drawn with the short walls, bays and tidy step off
+examples of the footprint sample (the three test footprints, osm_0351, osm_0915, osm_0395, osm_0379,
+osm_0900, osm_0846, osm_0812, osm_0357, osm_0192, osm_0307, osm_0377,
+osm_0623, osm_0719, osm_0738, osm_0707, osm_0423, osm_0072, osm_0427, osm_0270 and
+osm_0560). The figures of the wing ends and rules 1 to 10 are drawn with the short walls, bays and tidy step off
 (``RULES``), so that each shows its own step; those of the three steps show each on its own, and the last figure the
 result with every default::
 
@@ -78,9 +78,9 @@ def pair(axes, before, after, win, letters=(0, 1), lines=False, old_band=False, 
 def main(out: Path, png: Path | None, source: Path) -> None:
     g = sample(source)
     V, K, B = (g.loc[s, "geometry"] for s in TEST_IDS)
-    E, A, C = (g.loc[s, "geometry"] for s in ("Exeter_0008", "Alicante_0030", "Caen_0016"))
-    W, M = (g.loc[s, "geometry"] for s in ("Angers_0018", "Almere_0021"))
-    Wr, Ri, L = (g.loc[s, "geometry"] for s in ("Wroclaw_0046", "Riga_0034", "La_Linea_de_la_Concepcion_0016"))
+    E, A, C = (g.loc[s, "geometry"] for s in ("osm_0846", "osm_0812", "osm_0719"))
+    W, M = (g.loc[s, "geometry"] for s in ("osm_0351", "osm_0623"))
+    Wr, Ri, L = (g.loc[s, "geometry"] for s in ("osm_0357", "osm_0192", "osm_0307"))
 
     # band and corner rays: every ray to the facade, rays stop at the first ray, rays cut at the band line
     fig, axes = plt.subplots(1, 3, figsize=(15, 5.4))
@@ -102,7 +102,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     save(fig, out, "perimeter_rays_and_band", png)
 
-    # wing ends: Angers' leg, 2.8 m wide, with and without rays from the two corners of its end wall
+    # wing ends: osm_0351's leg, 2.8 m wide, with and without rays from the two corners of its end wall
     w = whole(W)
     every = replace(RULES, wing_end_max_m=0.0)
     fig, axes = plt.subplots(1, 4, figsize=(16, 4.6))
@@ -116,10 +116,10 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     save(fig, out, "perimeter_wing_ends", png)
 
-    # the wing-end check: stepped blocks whose narrow end keeps its rays (Derby, Aldershot)
+    # the wing-end check: stepped blocks whose narrow end keeps its rays (osm_0915, osm_0395)
     no_check = replace(RULES, wing_end_check=False)
     fig, axes = plt.subplots(2, 2, figsize=(10, 5.6))
-    for row, p in enumerate(g.loc[s, "geometry"] for s in ("Derby_0029", "Aldershot_0005")):
+    for row, p in enumerate(g.loc[s, "geometry"] for s in ("osm_0915", "osm_0395")):
         before, after = run(p, cfg=no_check), run(p)
         pair(axes[row], before, after, whole(p), letters=(2 * row, 2 * row + 1))
         for ax, r in zip(axes[row], (before, after)):
@@ -129,7 +129,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     save(fig, out, "perimeter_wing_end_check", png)
 
-    # rule 1: rays that meet merge (Krakow's lower wing, two bays)
+    # rule 1: rays that meet merge (osm_0699's lower wing, two bays)
     w = ((-4.5, 18.0), (-17.0, -6.5))
     fig, axes = plt.subplots(1, 2, figsize=(11, 3.4))
     pair(axes, run(K, "rays"), run(K, "merge_rays"), w, lines=True)
@@ -137,7 +137,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.12, 1, 1))
     save(fig, out, "perimeter_merged_rays", png)
 
-    # rule 2: close opposite rays become one line (Valdemoro's connector)
+    # rule 2: close opposite rays become one line (osm_0499's connector)
     w = window((-7.5, 15.0), 7.5)
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.9))
     pair(axes, run(V, "merge_rays"), run(V, "opposite"), w, lines=True)
@@ -145,7 +145,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     save(fig, out, "perimeter_opposite_rays", png)
 
-    # rule 3: rays that reach nothing are discarded (Bognor's left end)
+    # rule 3: rays that reach nothing are discarded (osm_0353's left end)
     w = ((-47.5, -29.5), (3.5, 19.5))
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.9))
     pair(axes, run(B, "opposite"), run(B, "discard"), w, lines=True)
@@ -153,7 +153,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     save(fig, out, "perimeter_discarded_rays", png)
 
-    # rule 4, legs: the shorter side onto the longer (Krakow's lower wing, Bognor's left core arm)
+    # rule 4, legs: the shorter side onto the longer (osm_0699's lower wing, osm_0353's left core arm)
     examples = [(K, ((-24.0, 18.0), (-23.5, -4.5))), (B, window((-31.0, 9.0), 8.0, 6.0))]
     fig, axes = plt.subplots(2, 2, figsize=(14, 7.6), gridspec_kw=dict(height_ratios=(1, 1.2)))
     for row, (p, w) in enumerate(examples):
@@ -163,7 +163,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     save(fig, out, "perimeter_narrow_core_legs", png)
 
-    # rule 4, narrow parts: Exeter's left wing, Alicante's core, Valdemoro's lower right wing; "before" leaves
+    # rule 4, narrow parts: osm_0846's left wing, osm_0812's core, osm_0499's lower right wing; "before" leaves
     # narrow parts as they are (no whole parts, tips or passages to lines)
     without = replace(RULES, collapse_narrow_parts=False, narrow_core_m=0.0)
     fig, axes = plt.subplots(3, 3, figsize=(15, 13.5))
@@ -182,7 +182,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_narrow_core_parts", png)
 
-    # rule 5: close zone corners become one (Krakow's bottom-left)
+    # rule 5: close zone corners become one (osm_0699's bottom-left)
     w = ((-25.5, -19.0), (-21.0, -15.5))
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.0))
     before, after = run(K, "narrow_core"), run(K, "close_points")
@@ -192,7 +192,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     save(fig, out, "perimeter_close_points", png)
 
-    # rule 6: narrow zones give way to the shorter diagonal (Krakow's lower wing, Valdemoro's left wing)
+    # rule 6: narrow zones give way to the shorter diagonal (osm_0699's lower wing, osm_0499's left wing)
     examples = [(K, window((-11.0, -13.5), 6.5, 4.5)), (V, window((-20.5, 12.0), 7.0, 5.0))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 7.0))
     for row, (p, w) in enumerate(examples):
@@ -201,7 +201,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_diagonals", png)
 
-    # rule 5 again: corner groups with a longer reach (Valdemoro's upper core, Bognor's upper wing)
+    # rule 5 again: corner groups with a longer reach (osm_0499's upper core, osm_0353's upper wing)
     examples = [(V, window((8.4, 21.7), 5.0, 3.6)), (B, window((-15.4, 15.0), 5.0, 3.6))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 6.8))
     for row, (p, w) in enumerate(examples):
@@ -212,7 +212,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_corner_groups", png)
 
-    # rule 7: touching thin zones become one convex zone (Wroclaw's wing end, Riga's rounded bay, La Linea)
+    # rule 7: touching thin zones become one convex zone (osm_0357's wing end, osm_0192's rounded bay, osm_0307)
     examples = [(Wr, window((-2.0, -10.5), 6.0, 4.3)), (Ri, window((1.3, -13.65), 5.7, 4.0)),
                 (L, window((6.6, 7.25), 4.5, 3.2))]
     fig, axes = plt.subplots(3, 2, figsize=(9, 9.6))
@@ -222,8 +222,8 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     save(fig, out, "perimeter_thin_touching", png)
 
-    # rule 7's width check: Bucharest's rounded bay, before rule 7, with the hull, merged without it
-    Bu = g.loc["Bucharest_0003", "geometry"]
+    # rule 7's width check: osm_0377's rounded bay, before rule 7, with the hull, merged without it
+    Bu = g.loc["osm_0377", "geometry"]
     w = window((4.6, 23.0), 6.5, 4.6)
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.9))
     draw_zones(axes[0], run(Bu, "corner_groups"), w)
@@ -235,7 +235,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     save(fig, out, "perimeter_thin_touching_width", png)
 
-    # rule 8: lone thin zones merge into a neighbour, after a relink if needed (Almere, Bognor's lower wing)
+    # rule 8: lone thin zones merge into a neighbour, after a relink if needed (osm_0623, osm_0353's lower wing)
     examples = [(M, window((30.7, -2.9), 4.2, 3.4)), (B, window((-6.5, -12.2), 4.5, 3.4))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 6.8))
     for row, (p, w) in enumerate(examples):
@@ -244,7 +244,7 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_thin_lone", png)
 
-    # rule 9: sharp corners are cut off (Krakow's bottom-left end, Caen)
+    # rule 9: sharp corners are cut off (osm_0699's bottom-left end, osm_0719)
     examples = [(K, window((-23.0, -16.0), 7.0, 5.0)), (C, window((3.0, 15.0), 5.0, 3.6))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 7.0))
     for row, (p, w) in enumerate(examples):
@@ -253,9 +253,9 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_sharp_corners", png)
 
-    # rule 9, who takes the tip: a triangle handed over whole (Liverpool, its outline dashed after), the shorter
-    # edge on the outline (Strasbourg)
-    examples = [("Liverpool_0042", window((12.7, 7.8), 10.5, 4.6)), ("Strasbourg_0020", window((0.4, -3.3), 2.8, 1.5))]
+    # rule 9, who takes the tip: a triangle handed over whole (osm_0738, its outline dashed after), the shorter
+    # edge on the outline (osm_0707)
+    examples = [("osm_0738", window((12.7, 7.8), 10.5, 4.6)), ("osm_0707", window((0.4, -3.3), 2.8, 1.5))]
     fig, axes = plt.subplots(2, 2, figsize=(11, 5.6))
     for row, (sid, w) in enumerate(examples):
         p = g.loc[sid, "geometry"]
@@ -267,8 +267,8 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     save(fig, out, "perimeter_sharp_takers", png)
 
-    # rule 10: specks join a neighbour (Brussels' chamfer, Bari's step)
-    examples = [("Brussels_0025", window((8.9, 8.2), 3.0, 2.1)), ("Bari_0003", window((2.8, -14.3), 3.0, 2.1))]
+    # rule 10: specks join a neighbour (osm_0423's chamfer, osm_0072's step)
+    examples = [("osm_0423", window((8.9, 8.2), 3.0, 2.1)), ("osm_0072", window((2.8, -14.3), 3.0, 2.1))]
     fig, axes = plt.subplots(2, 2, figsize=(9, 6.4))
     for row, (sid, w) in enumerate(examples):
         p = g.loc[sid, "geometry"]
@@ -279,9 +279,9 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     save(fig, out, "perimeter_specks", png)
 
-    # short walls: one ray per short step (Dordrecht) and per chamfer (Brussels); rays and zones, two rays against one
+    # short walls: one ray per short step (osm_0379) and per chamfer (osm_0423); rays and zones, two rays against one
     one_ray = replace(RULES, short_wall_one_ray=True)
-    examples = [("Dordrecht_0010", None), ("Brussels_0025", window((8.4, 7.4), 4.2, 3.2))]
+    examples = [("osm_0379", None), ("osm_0423", window((8.4, 7.4), 4.2, 3.2))]
     fig, axes = plt.subplots(2, 4, figsize=(17, 8.2))
     for row, (sid, w) in enumerate(examples):
         p = g.loc[sid, "geometry"]
@@ -299,15 +299,15 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_short_walls", png)
 
-    # bays: Enschede's polygonal bay and Bucharest's round bay; rays and zones, without and with the bay rule
+    # bays: osm_0900's polygonal bay and osm_0377's round bay; rays and zones, without and with the bay rule
     with_bays = replace(RULES, bays=True)
-    examples = ["Enschede_0004", "Bucharest_0003"]
+    examples = ["osm_0900", "osm_0377"]
     fig, axes = plt.subplots(2, 4, figsize=(17, 8.2))
     for row, sid in enumerate(examples):
         p = g.loc[sid, "geometry"]
         after = run(p, cfg=with_bays)
         bay = np.array(after.bay_corners).reshape(-1, 2)
-        if sid == "Bucharest_0003":  # the bay in the north
+        if sid == "osm_0377":  # the bay in the north
             bay = bay[bay[:, 1] > 15.0]
         (x0, y0), (x1, y1) = bay.min(axis=0), bay.max(axis=0)
         cx, cy, half = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, y1 - y0) / 2 + 4.0
@@ -324,11 +324,11 @@ def main(out: Path, png: Path | None, source: Path) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     save(fig, out, "perimeter_bays", png)
 
-    # tidy step: a corner straightened (Bonn), close points merged once more (Liege), a point rule 9 made merged
-    # with its neighbour (Besancon)
+    # tidy step: a corner straightened (osm_0560), close points merged once more (osm_0270), a point rule 9 made merged
+    # with its neighbour (osm_0427)
     tidy = replace(RULES, **TIDY_ON)
     fig, axes = plt.subplots(3, 2, figsize=(10, 12.0))
-    for row, sid in enumerate(("Bonn_0008", "Liege_0045", "Besancon_0001")):
+    for row, sid in enumerate(("osm_0560", "osm_0270", "osm_0427")):
         p = g.loc[sid, "geometry"]
         before, after = run(p), run(p, cfg=tidy)
         w = changed_window(before, after, 2.5)

@@ -12,8 +12,8 @@ Usage, from the repository root::
 
     python tools/search_tree_figure.py --input footprint.wkt -o tree.pdf tree.png
 
-    python tools/search_tree_figure.py --sample-id Gorzow_Wielkopolski_0007 --input-index 2 \\
-        -o temp/gorzow.pdf
+    python tools/search_tree_figure.py --sample-id <sample_id> --input-index 2 \\
+        -o temp/tree.pdf
 
 The second form reads the BEM4AI decomposition inputs,
 ``data/bem4ai/decomposition_inputs.gpkg`` (local, not in the repository).

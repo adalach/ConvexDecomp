@@ -21,7 +21,7 @@ tracer observes the search with `sys.monitoring`.
 python tools/search_tree_figure.py --input footprint.wkt -o tree.pdf tree.png
 
 # a BEM4AI decomposition input: building and input index in data/bem4ai/decomposition_inputs.gpkg
-python tools/search_tree_figure.py --sample-id Gorzow_Wielkopolski_0007 --input-index 2 -o gorzow.pdf
+python tools/search_tree_figure.py --sample-id <sample_id> --input-index 2 -o tree.pdf
 ```
 
 The settings default to the budget BEM4AI notebook 4 runs, with this engine's defaults for the rest; `--depth`, `--width`, `--min-area`,
