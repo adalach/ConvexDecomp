@@ -2,7 +2,7 @@
 """The pipeline diagram of the corner-ray perimeter's README: every step in the order it runs, in four rows (rays,
 lines, zones, final rounds), with the final rounds' loop and the wing-end and bay checks' retry::
 
-    python tools/corner_perimeter/pipeline_diagram.py [--out docs/corner_perimeter/perimeter_pipeline.svg]
+    python tools/corner_perimeter/pipeline_diagram.py [--out src/convexdecomp/corner_perimeter/figures/perimeter_pipeline.svg]
 
 Writes one SVG with live text (TUM figure style: TUM blue boxes with light-blue panels, port-and-chevron
 connectors). Text is measured with Helvetica Neue where the system has it, else estimated.
@@ -223,7 +223,7 @@ def diagram() -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", type=Path, default=ROOT / "docs" / "corner_perimeter" / "perimeter_pipeline.svg")
+    ap.add_argument("--out", type=Path, default=ROOT / "src" / "convexdecomp" / "corner_perimeter" / "figures" / "perimeter_pipeline.svg")
     a = ap.parse_args()
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(diagram())

@@ -52,8 +52,8 @@ otherwise.
 
 | File | What it is |
 | --- | --- |
-| `note_figures.py` | The figures of the package README and of the note "Convex Decomposition Perimeter", one SVG per step (`--out docs/corner_perimeter` or the note's attachments, `--png` small previews). |
-| `pipeline_diagram.py` | The pipeline diagram of the package README (`docs/corner_perimeter/perimeter_pipeline.svg`). |
+| `note_figures.py` | The figures of the package README and of the note "Convex Decomposition Perimeter", one SVG per step (`--out src/convexdecomp/corner_perimeter/figures` or the note's attachments, `--png` small previews). |
+| `pipeline_diagram.py` | The pipeline diagram of the package README (`src/convexdecomp/corner_perimeter/figures/perimeter_pipeline.svg`). |
 | `run_sample.py` | Every footprint of the sample with the chosen settings or others (`--set wing_end_max_m=0`): `run.csv`, `zones.gpkg`, `run.log` with the totals, `--sheets` for contact sheets of the worst and of random footprints. |
 | `compare_variants.py` | The chosen settings against variants with one choice changed, on the 23 footprints with the most reflex corners (`--n 0`: all); `--draw <variant>` draws the footprints where it differs. |
 | `overview.py` | Lines and zones of footprints side by side, with how often each step acted (default: the three test footprints). |

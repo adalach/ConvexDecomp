@@ -9,7 +9,7 @@ convex decomposition.
 
 The package needs only numpy, shapely and `convexdecomp.core.scores`; it does not draw.
 
-![The steps of the corner-ray perimeter in the order they run](../../../docs/corner_perimeter/perimeter_pipeline.svg)
+![The steps of the corner-ray perimeter in the order they run](figures/perimeter_pipeline.svg)
 
 *The steps in the order they run. The rule numbers are those of the settings and the figures; rule 2 runs before
 rule 1, because it is decided on the rays as cast, and rule 3 runs in two parts around rule 1. The final rounds
@@ -114,18 +114,18 @@ ray, except:
   `short_wall_tooth` the second reflex corner of a tooth (a convex corner between two short steps) continues the
   tooth's wall. Wing ends, bays and walls between two reflex corners keep their rays.
 
-![Wing ends](../../../docs/corner_perimeter/perimeter_wing_ends.svg)
+![Wing ends](figures/perimeter_wing_ends.svg)
 
 *osm_0351's leg, 2.8 m wide: (a, b) rays and zones with rays from the two corners of its end wall, (c, d)
 without them.*
 
-![Short walls](../../../docs/corner_perimeter/perimeter_short_walls.svg)
+![Short walls](figures/perimeter_short_walls.svg)
 
 *Short steps (osm_0379, top) and a chamfer (osm_0423, bottom): rays and zones with two rays per short
 wall (a, b, e, f) and with one (c, d, g, h). Crosses mark the corners without a ray of their own, circles where the
 one ray starts.*
 
-![Bays](../../../docs/corner_perimeter/perimeter_bays.svg)
+![Bays](figures/perimeter_bays.svg)
 
 *osm_0900's polygonal bay (top) and osm_0377's round bay (bottom): rays and zones without the bay rule
 (a, b, e, f) and with it (c, d, g, h). Circles mark the bay corners without rays.*
@@ -141,7 +141,7 @@ inside it the core (with `bays_in_band`, the offset starts from the footprint wi
 openings). Every casting corner casts a ray along its bisector. A ray is cut off at the band line and stops on the
 first ray it reaches: all rays grow at the same speed, and two arriving within `tie_m` both stop.
 
-![Band and corner rays](../../../docs/corner_perimeter/perimeter_rays_and_band.svg)
+![Band and corner rays](figures/perimeter_rays_and_band.svg)
 
 *osm_0699: (a) every ray to the facade, (b) rays stopped by the first ray, (c) rays cut at the band line.*
 
@@ -153,7 +153,7 @@ called by rule 3. Stages `band` and `rays`. Settings: Band and rays.
 Two rays running in opposite directions (within `opposite_angle_deg`) that each pass within `opposite_gap_m` of the
 other's corner become one line from corner to corner. Decided on the rays as cast, before they stop on each other.
 
-![Rule 2](../../../docs/corner_perimeter/perimeter_opposite_rays.svg)
+![Rule 2](figures/perimeter_opposite_rays.svg)
 
 *osm_0499's connector, (a) before and (b) after.*
 
@@ -166,7 +166,7 @@ The rays stop on the first ray they reach, on the band line or on a corner-to-co
 facade without meeting anything is discarded, and the others are stopped again without it, until none reaches the
 facade. A ray that the ray of a neighbouring corner ends on is kept, as the two close a triangle for rule 1.
 
-![Rule 3](../../../docs/corner_perimeter/perimeter_discarded_rays.svg)
+![Rule 3](figures/perimeter_discarded_rays.svg)
 
 *osm_0353's left end, (a) before and (b) after.*
 
@@ -178,7 +178,7 @@ come back.
 Where two rays meet, the ray that is hit is cut there, and one ray goes on from the meeting point between the two
 directions to the first line it meets.
 
-![Rule 1](../../../docs/corner_perimeter/perimeter_merged_rays.svg)
+![Rule 1](figures/perimeter_merged_rays.svg)
 
 *osm_0699's lower wing with two bays, (a) before and (b) after.*
 
@@ -201,12 +201,12 @@ shorter side moves onto the longer one, or both half way when their lengths are 
 lines that ended on a moved core corner follow it, and the line of a narrow part runs on to the next line. Core
 never vanishes: it becomes a line.
 
-![Rule 4, legs](../../../docs/corner_perimeter/perimeter_narrow_core_legs.svg)
+![Rule 4, legs](figures/perimeter_narrow_core_legs.svg)
 
 *Legs: osm_0699's lower wing (a, b) and osm_0353's left core arm (c, d), before and after; the dashed
 line is the band line as offset.*
 
-![Rule 4, narrow parts](../../../docs/corner_perimeter/perimeter_narrow_core_parts.svg)
+![Rule 4, narrow parts](figures/perimeter_narrow_core_parts.svg)
 
 *Narrow parts: osm_0846's left wing, osm_0812's core and osm_0499's lower right wing, one per row:
 the zones with narrow parts left as they are (a, d, g), the lines with the parts that became lines in pink (b, e,
@@ -226,7 +226,7 @@ perimeter zones (kind `zone`, or `thin` when narrower than `min_zone_width_m`) a
 
 Zone corners closer than `close_points_m` become one point at their mean. Points on the outline never move.
 
-![Rule 5](../../../docs/corner_perimeter/perimeter_close_points.svg)
+![Rule 5](figures/perimeter_close_points.svg)
 
 *osm_0699's bottom-left, (a) before and (b) after.*
 
@@ -238,7 +238,7 @@ Zone corners closer than `close_points_m` become one point at their mean. Points
 A four-cornered perimeter zone narrower than `narrow_zone_m`, with a perimeter zone across each long side, gives way
 to its shorter diagonal.
 
-![Rule 6](../../../docs/corner_perimeter/perimeter_diagonals.svg)
+![Rule 6](figures/perimeter_diagonals.svg)
 
 *osm_0699's lower wing (a, b) and osm_0499's left wing (c, d), before and after.*
 
@@ -248,7 +248,7 @@ to its shorter diagonal.
 
 Rule 5 once more with `corner_group_m`, in groups at most `corner_group_span_m` across.
 
-![Rule 5 again](../../../docs/corner_perimeter/perimeter_corner_groups.svg)
+![Rule 5 again](figures/perimeter_corner_groups.svg)
 
 *osm_0499's upper core (a, b) and osm_0353's upper wing (c, d), before and after.*
 
@@ -261,12 +261,12 @@ from its neighbours if they stay convex and (with `hull_keeps_width`) at least `
 neighbour would get thinner, the hull is still taken if the rest of rules 7 and 8, run on a copy, then merge every
 zone it thins; otherwise the zones merge without the hull, into a zone that is not convex.
 
-![Rule 7](../../../docs/corner_perimeter/perimeter_thin_touching.svg)
+![Rule 7](figures/perimeter_thin_touching.svg)
 
 *osm_0357's wing end, osm_0192's rounded bay and osm_0307, one per row, before and
 after.*
 
-![Rule 7, width check](../../../docs/corner_perimeter/perimeter_thin_touching_width.svg)
+![Rule 7, width check](figures/perimeter_thin_touching_width.svg)
 
 *osm_0377's rounded bay: (a) before rule 7, (b) with the hull, which would leave its neighbour 1.52 m wide,
 (c) merged without it.*
@@ -279,7 +279,7 @@ after.*
 A lone thin zone merges into a neighbour when the union is convex and wide enough, after moving one end of an inner
 edge to a zone corner within `relink_m` if needed.
 
-![Rule 8](../../../docs/corner_perimeter/perimeter_thin_lone.svg)
+![Rule 8](figures/perimeter_thin_lone.svg)
 
 *osm_0623 (a, b) and osm_0353's lower wing (c, d), before and after.*
 
@@ -297,11 +297,11 @@ cut again and again) or when the merged zone is convex. With `sharp_keep_convex`
 taker non-convex is skipped. Then, with `repeat_thin_after_sharp`, rules 7 and 8 once more for the thin zones the
 cuts leave.
 
-![Rule 9](../../../docs/corner_perimeter/perimeter_sharp_corners.svg)
+![Rule 9](figures/perimeter_sharp_corners.svg)
 
 *osm_0699's bottom-left end (a, b) and osm_0719 (c, d), before and after.*
 
-![Rule 9, who takes the tip](../../../docs/corner_perimeter/perimeter_sharp_takers.svg)
+![Rule 9, who takes the tip](figures/perimeter_sharp_takers.svg)
 
 *osm_0738, where a triangle goes whole to its neighbour (its outline dashed after, b), and osm_0707,
 where the shorter edge lies on the outline (c, d).*
@@ -309,7 +309,7 @@ where the shorter edge lies on the outline (c, d).*
 **Rule 10: specks join a neighbour.** With `join_specks`, a perimeter zone under `speck_m2` joins the neighbour it
 shares the longest edge with, convex or not.
 
-![Rule 10](../../../docs/corner_perimeter/perimeter_specks.svg)
+![Rule 10](figures/perimeter_specks.svg)
 
 *osm_0423's chamfer (a, b) and osm_0072's step (c, d), before and after.*
 
@@ -324,7 +324,7 @@ zone becomes non-convex, no zone gets thinner than `min_zone_width_m` (a core pa
 already was, and no corner under `sharp_corner_deg` and no speck appears. With `split_pinched`, a zone that a move
 makes touch itself becomes two zones if both are convex.
 
-![Tidy](../../../docs/corner_perimeter/perimeter_tidy.svg)
+![Tidy](figures/perimeter_tidy.svg)
 
 *Without and with the tidy step: a corner straightened (osm_0560), close points merged once more (osm_0270), and
 a point rule 9 made merged with its neighbour (osm_0427). Squares mark points snapped to the outline, circles
@@ -342,7 +342,7 @@ with `bay_check`, while the result keeps a thin, non-convex or sharp zone or a s
 bays left together. A try is kept when the footprint's thin, non-convex and sharp zones and specks go down. A stage
 `upto` is drawn with the wing ends and bays the checks kept.
 
-![Wing-end check](../../../docs/corner_perimeter/perimeter_wing_end_check.svg)
+![Wing-end check](figures/perimeter_wing_end_check.svg)
 
 *Stepped blocks whose narrow end gets its rays back (osm_0915, osm_0395): without the check (a, c) and with
 it (b, d); crosses mark the wing-end corners without rays.*
@@ -351,7 +351,7 @@ it (b, d); crosses mark the wing-end corners without rays.*
 
 ### The result
 
-![Result](../../../docs/corner_perimeter/perimeter_final_zones.svg)
+![Result](figures/perimeter_final_zones.svg)
 
 *The three test footprints with the default settings: osm_0499, osm_0699 and osm_0353.*
 
@@ -532,8 +532,8 @@ stage, determinism, the settings table and the preview; `tests/test_corner_perim
 
 | Tool | What it does |
 | --- | --- |
-| `pipeline_diagram.py` | the pipeline diagram above (`docs/corner_perimeter/perimeter_pipeline.svg`) |
-| `note_figures.py` | the step figures (`--out docs/corner_perimeter`) |
+| `pipeline_diagram.py` | the pipeline diagram above (`figures/perimeter_pipeline.svg`) |
+| `note_figures.py` | the step figures (`--out src/convexdecomp/corner_perimeter/figures`) |
 | `run_sample.py` | the procedure on all footprints, with counts per footprint |
 | `compare_variants.py` | the sample with each switch off in turn, against the defaults |
 | `overview.py` | each footprint's lines and zones side by side, with how often each step acted |
