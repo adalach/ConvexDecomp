@@ -13,8 +13,12 @@ Only the 2D geometry is kept, in WGS84 as BEM4AI stores it, with the metric CRS 
 (``metric_crs``, the UTM zone of BEM4AI's candidate tables) that the adapter projects it to. The
 columns carry BEM4AI's names. Two layers:
 
-- ``footprints``: the OSM outline as mapped (not repaired), read by ``OSM_1_Preprocessing.ipynb``
+- ``footprints``: the OSM outline as mapped (not repaired)
 - ``footprints_bem4ai``: the same footprint after the BEM4AI Stage 3 cleanup, for comparison
+
+The output, ``data/bem4ai/osm_footprints_bem4ai_source.gpkg``, keeps BEM4AI's ids, the OSM element
+ids and the city of every footprint and stays local. ``tools/anonymize_bem4ai_sample.py`` writes from
+it the copy ``OSM_1_Preprocessing.ipynb`` reads and the repository ships.
 
 The sample leaves out the footprints the review log removes at stage ``footprints``, and by default
 also those a review check selected and nobody kept, since BEM4AI is likely to drop them.
@@ -39,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "bem4ai" / "osm_footprints_bem4ai_sample.gpkg"
+DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "bem4ai" / "osm_footprints_bem4ai_source.gpkg"  # local; see anonymize_bem4ai_sample.py
 
 
 def parse_args() -> argparse.Namespace:

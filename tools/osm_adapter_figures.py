@@ -7,8 +7,8 @@ the note quotes::
 
     python tools/osm_adapter_figures.py --out /path/to/attachments [--sample <gpkg>]
 
-The sample defaults to ``data/bem4ai/osm_footprints_bem4ai_sample.gpkg`` (local only), which
-``tools/import_bem4ai_footprints.py`` writes.
+The sample defaults to ``data/bem4ai/osm_footprints_bem4ai_sample.gpkg``, the anonymized sample the
+repository ships (``tools/import_bem4ai_footprints.py`` and ``tools/anonymize_bem4ai_sample.py``).
 """
 
 from __future__ import annotations

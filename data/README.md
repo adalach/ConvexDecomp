@@ -1,6 +1,6 @@
 # Data Layout
 
-This repository expects one local upstream dataset and ships one public case-study input directly.
+This repository expects one local upstream dataset (ResPlan) and ships two OSM inputs directly: the footprint sample the OSM notebooks run on and the anonymized set of the EG-ICE 2026 paper.
 
 ## ResPlan
 
@@ -28,7 +28,21 @@ These derived files are local runtime artifacts and are not shipped in the publi
 
 `floorplans_zones.gpkg` carries the zone provenance and boundary-interface metadata described in the repository `README.md`. It has a `zones` layer with one row per convex part and an `interfaces` layer with one row per boundary sub-segment. ResPlan floorplans live in a local metric frame, so the file is written without a spatial reference.
 
+## BEM4AI footprint sample
+
+Bundled public input of the OSM notebooks:
+
+- `data/bem4ai/osm_footprints_bem4ai_sample.gpkg`
+  - layers: `footprints` (the OSM outline as mapped, with `sample_id` and `metric_crs`) and `footprints_bem4ai` (BEM4AI's cleaned version, with `sample_id`)
+  - 1,000 footprints from 528 cities in 27 European countries, drawn from the [BEM4AI](https://github.com/adalach/BEM4AI) dataset by `tools/import_bem4ai_footprints.py` and anonymized by `tools/anonymize_bem4ai_sample.py`: geometry only, ids `osm_0001` ... in a random order, no place names and no OpenStreetMap identifiers
+  - CRS: `EPSG:4326`; each footprint names the UTM zone it is projected to (`metric_crs`)
+  - attribution: OpenStreetMap contributors
+  - license: ODbL 1.0
+
+Derived notebook outputs, local and ignored by git: `data/bem4ai/subset_buildings_gdf.pkl` and `data/bem4ai/preprocessing/` from `notebooks/OSM_1_Preprocessing.ipynb`, `data/bem4ai/osm_zones.gpkg` from `notebooks/OSM_2_Decomposition.ipynb`. `data/bem4ai/README.md` describes every file of the folder.
+
 ## OSM
+
 
 Bundled public input:
 
@@ -42,8 +56,8 @@ Bundled public input:
 
 Derived notebook outputs:
 
-- `data/osm/subset_buildings_gdf.pkl` from `notebooks/OSM_1_Preprocessing.ipynb`
-- `data/osm/osm_zones.gpkg` from `notebooks/OSM_2_Decomposition.ipynb`
+- `data/osm/subset_buildings_gdf.pkl` from `notebooks/OSM_1_Preprocessing.ipynb` at tag `EG-ICE-2026`
+- `data/osm/osm_zones.gpkg` from `notebooks/OSM_2_Decomposition.ipynb` with `OSM_DATASET = 'paper'`
 
 These derived files are local runtime artifacts and are not shipped in the public release zip.
 

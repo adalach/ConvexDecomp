@@ -10,7 +10,8 @@ tracer observes the search with `sys.monitoring`.
 | `search_trace.py` | The tracer. `trace_search(polygon, cfg)` runs `convexdecomp.osm.decompose.decompose_polygon_with_stats` and records every state of the search: the cut that made it (edge labels as the engine names them, `r4 prev`, `r4 bis`, `h1 prev + h2 next` for the opening of a hole), the pools it went through (active, overflow, deferred), and what became of it (expanded, success, dead-end, duplicate). The engine is not changed: its functions are wrapped for the length of one call, and `compare_with_untraced` checks that the traced run chose the same variant with the same counts. `bem4ai_notebook_config()` gives the search budget BEM4AI notebook 4 runs, with this engine's defaults for the rest. |
 | `search_tree_figure.py` | Draws a traced search as the tree of the EG-ICE 2026 search-tree figure: a badge per state with the piece being decomposed in colour, the cut on every edge, legend and statistics. PDF, SVG or PNG. |
 | `search_explorer/` | A local web app that runs the traced search with the score and search settings on sliders and shows the tree and the ranked variants; `build_static.py` builds it as a static site that runs the search in the browser with Pyodide. See its README. |
-| `import_bem4ai_footprints.py` | Draws a random sample of the BEM4AI Stage 3 footprints and writes it as the input of `OSM_1_Preprocessing.ipynb`: the OSM outline as mapped (WGS84, not repaired), read again from BEM4AI's city extract and checked against the fingerprint BEM4AI recorded, plus BEM4AI's cleaned footprint, with the metric CRS of each city. Runs in BEM4AI's own environment, because it uses BEM4AI's reader and fingerprint. |
+| `import_bem4ai_footprints.py` | Draws a random sample of the BEM4AI Stage 3 footprints into `data/bem4ai/osm_footprints_bem4ai_source.gpkg` (local): the OSM outline as mapped (WGS84, not repaired), read again from BEM4AI's city extract and checked against the fingerprint BEM4AI recorded, plus BEM4AI's cleaned footprint, with BEM4AI's ids, the OSM element ids, the city and the metric CRS of each footprint. Runs in BEM4AI's own environment, because it uses BEM4AI's reader and fingerprint. |
+| `anonymize_bem4ai_sample.py` | Writes the copy of that sample the repository ships and `OSM_1_Preprocessing.ipynb` reads, `data/bem4ai/osm_footprints_bem4ai_sample.gpkg`: geometry and metric CRS only, with the ids `osm_0001` ... in a random order; the map back to BEM4AI's ids goes to the local `data/bem4ai/sample_ids.csv`. |
 | `osm_adapter_figures.py` | Runs the OSM adapter (`run_adapter`, level L2, the notebook's settings) on the BEM4AI sample, and writes the figures of the OSM adapter note (SVG, TUM style), the study of the wall-line tolerance with the depths of the facade steps, and `osm_adapter_numbers.json` with the counts the note quotes. |
 
 ## Search-tree figure
@@ -34,9 +35,11 @@ untraced one and prints the result.
 
 ```bash
 /path/to/BEM4AI/.venv/bin/python tools/import_bem4ai_footprints.py --bem4ai /path/to/BEM4AI --n 1000
+python tools/anonymize_bem4ai_sample.py
 ```
 
-Writes `data/bem4ai/osm_footprints_bem4ai_sample.gpkg` (layers `footprints` and `footprints_bem4ai`).
+The first writes `data/bem4ai/osm_footprints_bem4ai_source.gpkg` (layers `footprints` and `footprints_bem4ai`,
+local), the second the anonymized `data/bem4ai/osm_footprints_bem4ai_sample.gpkg` the notebooks read.
 The sample leaves out the footprints BEM4AI's review log removes and, unless
 `--keep-review-selections` is given, those a review check selected; `--n 0` takes them all.
 
@@ -73,7 +76,8 @@ python -m http.server 8766 --directory tmp/search_explorer_site
 
 ## Data
 
-`data/bem4ai/` (local, ignored by git) holds the polygons BEM4AI notebook 4 decomposes,
+`data/bem4ai/` holds the footprint sample the OSM notebooks run on, `osm_footprints_bem4ai_sample.gpkg`
+(in the repository), and two local files ignored by git: the polygons BEM4AI notebook 4 decomposes,
 `decomposition_inputs.gpkg`, and the explorer's examples, `explorer_examples.json`. The figure
 tool reads the first with `--sample-id`; the explorer offers the demo's footprints
 (`search_explorer/demo_examples.json`) when the second is missing.

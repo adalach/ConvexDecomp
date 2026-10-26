@@ -9,7 +9,7 @@ This repository accompanies the paper *Workflow-Oriented Convex Decomposition of
 This repository is a workflow layer around two upstream data sources that are not created by `ConvexDecomp`:
 
 - `ResPlan` data comes from [m-agour/ResPlan](https://github.com/m-agour/ResPlan) and retains its upstream attribution and licensing terms.
-- `OSM` case-study footprints are derived from OpenStreetMap contributors data, redistributed here in a reduced anonymized form under the [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+- `OSM` footprints are derived from OpenStreetMap contributors data and redistributed here under the [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/): the 1,000-footprint sample the OSM notebooks run on (`data/bem4ai/osm_footprints_bem4ai_sample.gpkg`, drawn from the [BEM4AI](https://github.com/adalach/BEM4AI) dataset, with BEM4AI's cleaned version of each footprint) and the reduced anonymized set of the EG-ICE 2026 paper (`data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`).
 
 `ConvexDecomp` contributes the workflow design, preprocessing logic, decomposition code, and the paper-specific orchestration around those sources.
 
@@ -31,7 +31,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-The repository already ships the anonymized OSM case-study dataset used in the paper, so you can run the notebooks directly. On the first ResPlan run, the preprocessing notebook will clone the upstream `m-agour/ResPlan` repository into `external/resplan/` if that archive source is still missing, then extract `ResPlan.pkl` from `ResPlan.zip`. It requires `git` and network access:
+The repository ships the OSM footprint sample the OSM notebooks run on (`data/bem4ai/osm_footprints_bem4ai_sample.gpkg`), so `OSM_1_Preprocessing.ipynb` and then `OSM_2_Decomposition.ipynb` run directly after cloning; the second takes about 12 minutes. On the first ResPlan run, the preprocessing notebook will clone the upstream `m-agour/ResPlan` repository into `external/resplan/` if that archive source is still missing, then extract `ResPlan.pkl` from `ResPlan.zip`. It requires `git` and network access:
 
 1. `notebooks/ResPlan_1_Preprocessing.ipynb`
 2. `notebooks/ResPlan_2_Decomposition.ipynb`
@@ -64,10 +64,11 @@ python -m uvicorn app:app --app-dir tools/search_explorer --port 8765
 
 ## Data Contract
 
-The OSM case-study input is included directly. The ResPlan raw dataset is fetched on demand from the upstream public repository, but the public workflow now uses only local `ConvexDecomp` helper code.
+The OSM inputs are included directly. The ResPlan raw dataset is fetched on demand from the upstream public repository; the workflow around it uses only `ConvexDecomp`'s own helper code.
 
 - `notebooks/ResPlan_1_Preprocessing.ipynb` clones `https://github.com/m-agour/ResPlan.git` into `external/resplan/` only when that local archive source is missing, then extracts `ResPlan.zip` into `external/resplan/ResPlan.pkl`.
-- The OSM notebook pipeline reads the bundled GeoPackage `data/osm/osm_building_footprints_openstreetmap_odbl.gpkg`, which is an anonymized reduced derivative of OpenStreetMap contributors data rather than an original dataset created in this repository.
+- `notebooks/OSM_1_Preprocessing.ipynb` reads the bundled sample `data/bem4ai/osm_footprints_bem4ai_sample.gpkg`: 1,000 OpenStreetMap footprints drawn from the BEM4AI dataset, each as mapped (WGS84, with the UTM zone its local frame is projected from) and as BEM4AI cleaned it, with anonymous ids `osm_0001` ... and no place names or OpenStreetMap identifiers. `tools/import_bem4ai_footprints.py` and `tools/anonymize_bem4ai_sample.py` draw such a sample from a BEM4AI checkout.
+- `data/osm/osm_building_footprints_openstreetmap_odbl.gpkg` is the anonymized OSM set of the EG-ICE 2026 paper (`sample_id` and geometry only). `OSM_2_Decomposition.ipynb` runs on it with `OSM_DATASET = 'paper'` once its working table `data/osm/subset_buildings_gdf.pkl` exists; `OSM_1_Preprocessing.ipynb` at tag `EG-ICE-2026` writes that table.
 - Derived notebook outputs are written under `data/resplan/`, `data/osm/` and `data/bem4ai/`. The OSM preprocessing notebook runs the adapter (`convexdecomp.osm.preprocess.run_adapter`) at a preprocessing level (`L0` local metres only, `L1` + vertices and thin parts, `L2` + architectural axes and normalization), checks every footprint against `config/checks.json`, and exports the working set: every footprint that passes (`working_set_rule = 'all'`), or the paper's still non-convex footprints with 6 to 32 exterior vertices (`'paper'`). Next to the working table it writes the checks tables and a funnel of every footprint to `preprocessing/`.
 
 See `data/README.md` for the expected local layout.
@@ -176,6 +177,7 @@ The associated paper is:
 Third-party source assets keep their own licensing terms:
 
 - The ResPlan notebook preserves the upstream attribution path by cloning the public repository only when the local dataset archive source is missing.
+- `data/bem4ai/osm_footprints_bem4ai_sample.gpkg` is derived from OpenStreetMap data through the [BEM4AI](https://github.com/adalach/BEM4AI) dataset, contains only anonymized `sample_id` values, the UTM zone of each footprint and footprint geometry, and is redistributed with attribution to OpenStreetMap contributors under the [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 - `data/osm/osm_building_footprints_openstreetmap_odbl.gpkg` is derived from OpenStreetMap data, contains only anonymized `sample_id` values plus footprint geometry, and is redistributed with attribution to OpenStreetMap contributors under the [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 
 ## Plotting Backends
