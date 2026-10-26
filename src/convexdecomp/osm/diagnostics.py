@@ -186,9 +186,17 @@ def collect_decomposition_polygons(
 def prepare_decomposition_inputs(
     subset_buildings_gdf: gpd.GeoDataFrame,
     *,
-    use_trapezoid_triangle_precheck: bool,
-    precheck_subdiv_cfg: Any,
+    use_trapezoid_triangle_precheck: bool = False,
+    precheck_subdiv_cfg: Any = None,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Each building's decomposition inputs: ``decomp_polygons`` and their roles in ``decomp_polygon_roles``.
+
+    By default the inputs are the building's perimeter zones and core parts (``perimeter_parts`` with
+    ``perimeter_part_roles``, and ``interior_geom``), or the whole footprint where no perimeter was
+    defined. ``use_trapezoid_triangle_precheck`` subdivides an offset perimeter band into trapezoids
+    first (``convexdecomp.osm.subdivide``, with ``precheck_subdiv_cfg``); the three seed tables it
+    returns are empty otherwise.
+    """
     buildings_convex_gdf = subset_buildings_gdf.copy()
 
     if use_trapezoid_triangle_precheck:

@@ -181,5 +181,5 @@ Third-party source assets keep their own licensing terms:
 ## Plotting Backends
 
 - `ResPlan_1_Preprocessing.ipynb` and `ResPlan_2_Decomposition.ipynb` force Matplotlib `inline` output so the figures stay simple and static.
-- `OSM_1_Preprocessing.ipynb` and `OSM_2_Decomposition.ipynb` try the Jupyter `widget` backend first and fall back to `inline` when interactive widgets are unavailable.
-- The repository now includes `ipympl` so the OSM notebooks can use the widget backend in environments that support it.
+- `OSM_1_Preprocessing.ipynb` and `OSM_2_Decomposition.ipynb` draw `inline` as well, so the saved notebooks keep their figures and GitHub shows them.
+- `ipympl` is installed with the requirements: switch a notebook's setup cell to `%matplotlib widget` for interactive figures.
