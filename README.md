@@ -91,6 +91,7 @@ ConvexDecomp/
 │   ├── OSM_1_Preprocessing.ipynb
 │   └── OSM_2_Decomposition.ipynb
 └── src/convexdecomp/
+    ├── convex_zones/
     ├── core/
     ├── corner_perimeter/
     ├── diagnostics/
@@ -104,6 +105,7 @@ ConvexDecomp/
 
 ## Structure
 
+- `src/convexdecomp/convex_zones/`: one building's convex zones from its perimeter zones: every zone decomposed, a zone the search cannot cut merged with its neighbours, the whole footprint as the last resort; its settings with page metadata and a preview for a settings page (the step `run_building_decomposition` runs for a table).
 - `src/convexdecomp/core/`: shared convexity checks, partition scoring, and adaptive search.
 - `src/convexdecomp/corner_perimeter/`: the corner-ray perimeter: a 4.5 m band along the facades, rays from the footprint's corners, and ten rules and a tidy step that clean up the zones without moving the outline; its README shows the pipeline, every step with figures (`figures/` in the same folder) and every setting.
 - `src/convexdecomp/geometry/`: the exact two-piece cuts both adapters use (`cuts.py`), the exact openings of a hole that the OSM search tries (`openings.py`), and the splitting of polygons with holes into hole-less pieces used in preprocessing and by ResPlan (`holes.py`).

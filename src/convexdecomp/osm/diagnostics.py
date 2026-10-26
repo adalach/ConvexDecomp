@@ -10,9 +10,9 @@ from matplotlib import colormaps as cmaps
 from matplotlib.lines import Line2D
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
 
 from convexdecomp.osm.axis_alignment import alignment_axis_records_for_polygon
+from convexdecomp.convex_zones.building import decompose_pieces
 from convexdecomp.osm.decompose import decompose_polygon_with_stats, extract_polygons
 from convexdecomp.osm.subdivide import subdivide_perimeter_gdf
 from convexdecomp.plotting.geometry_grid import GHSL_gridplot
@@ -479,76 +479,6 @@ def check_area_conservation(
     return violations
 
 
-def _shared_edge_m(a: Polygon, b: Polygon) -> float:
-    return float(a.boundary.intersection(b.boundary).length)
-
-
-def _search_seconds(items: list[dict[str, Any]]) -> float:
-    return sum(float(item["stats"].get("time_seconds") or 0.0) for item in items)
-
-
-def _merge_failed_pieces(
-    items: list[dict[str, Any]],
-    cfg: Any,
-    max_share: float,
-) -> tuple[list[dict[str, Any]] | None, int, float]:
-    """Merge each piece the engine could not cut with a neighbour, until every piece is cut.
-
-    The first failing piece is tried with its neighbours (pieces sharing at least
-    ``MIN_SHARED_EDGE_M`` of edge), longest shared edge first: the first union that
-    decomposes replaces the two pieces. When no union decomposes, the piece is merged
-    with the neighbour it shares most edge with and tried again from there, as long as
-    the merged piece stays within ``max_share`` of the building's area. Returns the new
-    pieces (None when the merging gives up), the number of merges and the seconds its
-    searches took.
-    """
-    items = list(items)
-    building_area = sum(item["polygon"].area for item in items)
-    merges, searched = 0, 0.0
-
-    while True:
-        failing = [k for k, item in enumerate(items) if not item["stats"]["fully_convex_best"]]
-        if not failing:
-            return items, merges, searched
-        i = failing[0]
-        piece = items[i]
-        neighbours = sorted(
-            ((_shared_edge_m(piece["polygon"], other["polygon"]), j) for j, other in enumerate(items) if j != i),
-            reverse=True,
-        )
-        neighbours = [(length, j) for length, j in neighbours if length >= MIN_SHARED_EDGE_M]
-        tried: dict[int, tuple[Polygon, dict[str, Any]]] = {}
-        chosen = None
-        for _, j in neighbours:
-            union = unary_union([piece["polygon"], items[j]["polygon"]])
-            if not isinstance(union, Polygon):
-                continue
-            stats = decompose_polygon_with_stats(union, cfg)
-            searched += float(stats.get("time_seconds") or 0.0)
-            tried[j] = (union, stats)
-            if stats["fully_convex_best"]:
-                chosen = j
-                break
-        if chosen is None:
-            # No neighbour helps on its own: take the one sharing most edge and go on from there,
-            # unless the merged piece would hold too much of the building.
-            if not neighbours or len(items) <= 2 or neighbours[0][1] not in tried:
-                return None, merges, searched
-            chosen = neighbours[0][1]
-            if tried[chosen][0].area > max_share * building_area:
-                return None, merges, searched
-        union, stats = tried[chosen]
-        merged = {
-            "polygon": union,
-            "role": "merged_zone",
-            "zone_id": None,
-            "merged_from": piece["merged_from"] + items[chosen]["merged_from"],
-            "stats": stats,
-        }
-        items = [item for k, item in enumerate(items) if k not in (i, chosen)] + [merged]
-        merges += 1
-
-
 def run_building_decomposition(
     buildings_convex_gdf: gpd.GeoDataFrame,
     cfg: Any,
@@ -559,8 +489,9 @@ def run_building_decomposition(
     """Decompose every building's input polygons; with ``fallback="merge"``, rescue the pieces that fail.
 
     With the merge fallback, a building with a piece the engine cannot cut first merges
-    that piece with a neighbour and decomposes the union (``_merge_failed_pieces``); the
-    building's other pieces keep their decomposition. When that gives up, the whole
+    that piece with a neighbour and decomposes the union
+    (:func:`convexdecomp.convex_zones.merge_failed_pieces`); the building's other pieces keep
+    their decomposition. When that gives up, the whole
     footprint is decomposed instead. A building where neither works keeps its pieces and
     stays failed. ``fallback_applied`` says what happened ("merge", "whole", or None),
     ``n_fallback_merges`` how many merges, ``fallback_seconds`` the time of the searches
@@ -614,39 +545,32 @@ def run_building_decomposition(
 
         polygon_roles = row.get("decomp_polygon_roles") or []
         sample_id = row["sample_id"]
+        roles = [polygon_roles[k] if k < len(polygon_roles) else None for k in range(len(polygons))]
+        building = decompose_pieces(
+            list(zip(polygons, roles)),
+            lambda polygon: decompose_polygon_with_stats(polygon, cfg),
+            footprint=row["geometry"],
+            merge=fallback == "merge",
+            max_share=fallback_max_share,
+            min_shared_edge_m=MIN_SHARED_EDGE_M,
+            whole=fallback == "merge",
+        )
+        fallback_applied, n_fallback_merges = building.fallback, building.merges
+        n_merged = n_whole = 0
         items = []
-        for polygon_idx, polygon in enumerate(polygons, start=1):
-            zone_id = f"{sample_id}_poly_{polygon_idx:02d}"
-            items.append(
-                {
-                    "polygon": polygon,
-                    "role": polygon_roles[polygon_idx - 1] if polygon_idx - 1 < len(polygon_roles) else None,
-                    "zone_id": zone_id,
-                    "merged_from": [zone_id],
-                    "stats": decompose_polygon_with_stats(polygon, cfg),
-                }
-            )
-
-        fallback_applied, n_fallback_merges = None, 0
-        searched = _search_seconds(items)  # every search the building needed, kept or not
-        failed = any(not item["stats"]["fully_convex_best"] for item in items)
-        if failed and fallback == "merge" and not all(item["role"] == "footprint" for item in items):
-            merged, merges, merge_seconds = _merge_failed_pieces(items, cfg, fallback_max_share)
-            searched += merge_seconds
-            if merged is not None:
-                items, n_fallback_merges, fallback_applied = merged, merges, "merge"
-                for k, item in enumerate(item for item in items if item["zone_id"] is None):
-                    item["zone_id"] = f"{sample_id}_merged_{k + 1:02d}"
+        for piece in building.pieces:
+            if piece.kind == "merged":
+                n_merged += 1
+                zone_id, role = f"{sample_id}_merged_{n_merged:02d}", "merged_zone"
+            elif building.fallback == "whole":
+                n_whole += 1
+                zone_id, role = f"{sample_id}_footprint_{n_whole:02d}", "footprint"
             else:
-                whole = [
-                    {"polygon": poly, "role": "footprint", "zone_id": f"{sample_id}_footprint_{k:02d}",
-                     "merged_from": [], "stats": decompose_polygon_with_stats(poly, cfg)}
-                    for k, poly in enumerate(extract_polygons(row["geometry"]), start=1)
-                ]
-                searched += _search_seconds(whole)
-                if whole and all(item["stats"]["fully_convex_best"] for item in whole):
-                    items, fallback_applied = whole, "whole"
-        fallback_seconds = searched - _search_seconds(items)
+                zone_id, role = f"{sample_id}_poly_{piece.sources[0] + 1:02d}", piece.kind
+            merged_from = [f"{sample_id}_poly_{k + 1:02d}" for k in piece.sources]
+            items.append({"polygon": piece.polygon, "role": role, "zone_id": zone_id, "merged_from": merged_from,
+                          "stats": piece.stats})
+        fallback_seconds = building.discarded_seconds
 
         convex_parts = []
         convex_parts_counts = []
