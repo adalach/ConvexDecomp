@@ -4,27 +4,38 @@ engine cannot cut.
 :func:`decompose_zones` takes the zones a perimeter gives (``(polygon, kind)`` pairs, as
 :attr:`convexdecomp.corner_perimeter.PerimeterResult.zones` holds them: kinds ``zone``, ``thin`` and ``core``) and
 decomposes each of them as it is: a convex zone comes back as one part, the others are cut. When a piece cannot be cut,
-:func:`merge_failed_pieces` merges it with neighbours, and the whole footprint is the last resort
-(:class:`~.settings.ZoneConfig`'s fallback section). :func:`decompose_pieces` is the same with the engine call and the
-fallback given directly: a caller that stores or times every piece's search passes its own ``decompose``.
+:func:`merge_failed_pieces` merges it with neighbours, and the whole footprint is the last resort, within a time
+budget (:class:`~.settings.ZoneConfig`'s fallback section). :func:`decompose_pieces` is the same with the engine call
+and the fallback given directly: a caller that stores or times every piece's search passes its own ``decompose``.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
-from convexdecomp.osm.decompose import decompose_polygon_with_stats, extract_polygons
+from convexdecomp.osm.decompose import ConvexDecompositionConfig, decompose_polygon_with_stats, extract_polygons
 
 from .settings import ZoneConfig, engine_config
 
-#: the engine call: a polygon's search result, as ``decompose_polygon_with_stats`` gives it
-Decompose = Callable[[Polygon], dict[str, Any]]
+#: the engine call: a polygon and the seconds its search may take (None: no limit) in, the search's result out, as
+#: ``decompose_polygon_with_stats`` gives it
+Decompose = Callable[[Polygon, "float | None"], dict[str, Any]]
+
+
+def engine_call(cfg: ConvexDecompositionConfig) -> Decompose:
+    """The engine with ``cfg`` as a :data:`Decompose`: a time limit sets the config's ``max_seconds``."""
+
+    def decompose(polygon: Polygon, max_seconds: float | None = None) -> dict[str, Any]:
+        limited = cfg if max_seconds is None else replace(cfg, max_seconds=max_seconds)
+        return decompose_polygon_with_stats(polygon, limited)
+
+    return decompose
 
 
 @dataclass
@@ -68,6 +79,8 @@ class BuildingZones:
     seconds: float = 0.0
     #: every search in the order it ran: (the kind of the piece searched, seconds)
     searches: list[tuple[str, float]] = field(default_factory=list)
+    #: whether the fallback's time budget ran out before the building was decomposed
+    out_of_time: bool = False
 
     @property
     def ok(self) -> bool:
@@ -90,9 +103,9 @@ class BuildingZones:
         return max(0.0, self.seconds - sum(p.seconds for p in self.pieces))
 
 
-def _timed(decompose: Decompose, polygon: Polygon) -> tuple[dict[str, Any], float]:
+def _timed(decompose: Decompose, polygon: Polygon, max_seconds: float | None = None) -> tuple[dict[str, Any], float]:
     t0 = time.perf_counter()
-    stats = decompose(polygon)
+    stats = decompose(polygon, max_seconds)
     seconds = stats.get("time_seconds")
     return stats, float(seconds) if seconds is not None else time.perf_counter() - t0
 
@@ -109,6 +122,7 @@ def merge_failed_pieces(
     max_share: float = 0.5,
     min_shared_edge_m: float = 0.05,
     searches: list[tuple[str, float]] | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[Piece] | None, int]:
     """Merge each piece the engine could not cut with a neighbour, until every piece is cut.
 
@@ -116,7 +130,8 @@ def merge_failed_pieces(
     longest shared edge first: the first union that decomposes replaces the two pieces. When no union decomposes,
     the piece is merged with the neighbour it shares most edge with and tried again from there, as long as the merged
     piece stays within ``max_share`` of the building's area. Returns the new pieces (None when the merging gives up)
-    and the number of merges; every search's time goes to ``searches``.
+    and the number of merges; every search's time goes to ``searches``. A ``deadline`` (a ``time.perf_counter()``
+    value) bounds every search, and the merging gives up once it has passed.
     """
     pieces = list(pieces)
     building_area = sum(p.polygon.area for p in pieces)
@@ -139,7 +154,10 @@ def merge_failed_pieces(
             union = unary_union([piece.polygon, pieces[j].polygon])
             if not isinstance(union, Polygon):
                 continue
-            stats, seconds = _timed(decompose, union)
+            left = None if deadline is None else deadline - time.perf_counter()
+            if left is not None and left <= 0.0:
+                return None, merges
+            stats, seconds = _timed(decompose, union, left)
             if searches is not None:
                 searches.append(("merged", seconds))
             tried[j] = (union, stats, seconds)
@@ -173,14 +191,17 @@ def decompose_pieces(
     max_share: float = 0.5,
     min_shared_edge_m: float = 0.05,
     whole: bool = True,
+    max_seconds: float | None = None,
 ) -> BuildingZones:
     """Decompose every zone with ``decompose``; when a piece fails, merge (``merge``) and then decompose the whole
-    footprint (``whole``; the union of the zones when ``footprint`` is None).
+    footprint (``whole``; the union of the zones when ``footprint`` is None), the two together within ``max_seconds``
+    (None: no limit). The first pass has no time limit.
 
     A plain polygon among ``zones`` is a zone of kind ``zone``. The zones are searched, and merged, in their order
     with the core parts (kind ``core``) last, as ``OSM_2_Decomposition.ipynb`` takes them; a piece's ``sources`` are
     positions in ``zones`` as given. Zones that are all of kind ``footprint`` (no perimeter) get no fallback. When
-    merging gives up and the whole footprint does not decompose either, the building keeps its first pass.
+    merging gives up and the whole footprint does not decompose either, the building keeps its first pass; when the
+    time ran out on the way, :attr:`BuildingZones.out_of_time` says so.
     """
     pairs = _zone_pairs(zones)
     order = sorted(range(len(pairs)), key=lambda k: pairs[k][1] == "core")
@@ -196,9 +217,10 @@ def decompose_pieces(
     if result.ok or not first or all(kind == "footprint" for _, kind in pairs):
         result.seconds = sum(s for _, s in searches)
         return result
+    deadline = None if max_seconds is None else time.perf_counter() + max_seconds
     if merge:
         merged, merges = merge_failed_pieces(first, decompose, max_share=max_share,
-                                             min_shared_edge_m=min_shared_edge_m, searches=searches)
+                                             min_shared_edge_m=min_shared_edge_m, searches=searches, deadline=deadline)
         if merged is not None:
             result.pieces, result.merges, result.fallback = merged, merges, "merge"
     if result.fallback is None and whole:
@@ -206,12 +228,17 @@ def decompose_pieces(
         polygons = extract_polygons(outline)
         candidates = []
         for polygon in polygons:
-            stats, seconds = _timed(decompose, polygon)
+            left = None if deadline is None else deadline - time.perf_counter()
+            if left is not None and left <= 0.0:
+                candidates = []
+                break
+            stats, seconds = _timed(decompose, polygon, left)
             searches.append(("footprint", seconds))
             inside = tuple(k for k, (z, _) in enumerate(pairs) if polygon.covers(z.representative_point()))
             candidates.append(Piece(polygon, "footprint", inside, stats, seconds))
         if candidates and all(p.convex for p in candidates):
             result.pieces, result.fallback = candidates, "whole"
+    result.out_of_time = result.fallback is None and deadline is not None and time.perf_counter() >= deadline
     result.seconds = sum(s for _, s in searches)
     return result
 
@@ -226,16 +253,11 @@ def decompose_zones(
     """A building's convex zones from its perimeter's zones, with the settings of ``config``
     (:func:`decompose_pieces`; ``decompose`` defaults to the engine with :func:`~.settings.engine_config`)."""
     config = config or ZoneConfig()
-    if decompose is None:
-        cfg = engine_config(config)
-
-        def decompose(polygon: Polygon) -> dict[str, Any]:
-            return decompose_polygon_with_stats(polygon, cfg)
-
-    return decompose_pieces(zones, decompose, footprint=footprint, merge=config.merge_failed,
-                            max_share=config.merge_max_share, min_shared_edge_m=config.min_shared_edge_m,
-                            whole=config.whole_footprint)
+    return decompose_pieces(zones, decompose or engine_call(engine_config(config)), footprint=footprint,
+                            merge=config.merge_failed, max_share=config.merge_max_share,
+                            min_shared_edge_m=config.min_shared_edge_m, whole=config.whole_footprint,
+                            max_seconds=config.fallback_max_seconds or None)
 
 
-__all__ = ["BuildingZones", "Decompose", "Piece", "decompose_pieces", "decompose_zones", "merge_failed_pieces",
-           "shared_edge_m"]
+__all__ = ["BuildingZones", "Decompose", "Piece", "decompose_pieces", "decompose_zones", "engine_call",
+           "merge_failed_pieces", "shared_edge_m"]

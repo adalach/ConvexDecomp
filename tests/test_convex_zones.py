@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import math
 import sys
-from dataclasses import fields
+import time
+from dataclasses import fields, replace
 from pathlib import Path
 
 from shapely import union_all, wkb
@@ -18,7 +19,8 @@ from shapely.geometry import Polygon, box
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from convexdecomp.convex_zones import (LAYERS, NUMBERS, ZoneConfig, decompose_pieces, decompose_zones,  # noqa: E402
-                                       engine_config, piece_records, preview, settings_table, zone_records)
+                                       engine_call, engine_config, piece_records, preview, settings_table,
+                                       zone_records)
 from convexdecomp.core.search import AdaptiveSearchConfig  # noqa: E402
 from convexdecomp.corner_perimeter import corner_ray_perimeter  # noqa: E402
 from convexdecomp.osm.decompose import ConvexDecompositionConfig  # noqa: E402
@@ -114,7 +116,7 @@ def test_a_footprint_that_cannot_be_cut_is_dropped():
 def test_the_core_is_searched_last_and_sources_keep_the_given_order():
     seen = []
 
-    def decompose(polygon):
+    def decompose(polygon, max_seconds):
         seen.append(round(polygon.area))
         return {"fully_convex_best": True, "best_variant": [polygon], "time_seconds": 0.0}
 
@@ -124,8 +126,36 @@ def test_the_core_is_searched_last_and_sources_keep_the_given_order():
     assert [p.sources for p in result.pieces] == [(1,), (2,), (0,)]
 
 
+def test_the_fallback_stops_when_its_time_is_up():
+    calls = []
+
+    def slow(polygon, max_seconds):
+        calls.append(max_seconds)
+        if max_seconds is None:                    # the first pass: the strip cannot be cut
+            return engine_call(engine_config())(polygon)
+        time.sleep(0.05)
+        return {"fully_convex_best": False, "best_variant": [], "time_seconds": 0.05}
+
+    result = decompose_pieces(ARM_PIECES, slow, footprint=box(0, 0, 10, 10), max_seconds=0.12)
+    assert not result.ok and result.out_of_time and result.fallback is None
+    assert calls[:3] == [None, None, None] and all(0.0 < t <= 0.12 for t in calls[3:])
+    assert len(calls) <= 6                         # the budget runs out after about two fallback searches
+    got = preview(box(0, 0, 10, 10), ARM_PIECES, ZoneConfig(fallback_max_seconds=0.12), decompose=slow)
+    assert got["fate"]["detail"]["out_of_time"] and got["numbers"]["out_of_time"] == 1
+    assert decompose_zones(ARM_PIECES, ZoneConfig(fallback_max_seconds=0.0)).fallback == "whole"
+
+
+def test_the_engine_stops_at_its_time_limit():
+    from convexdecomp.osm.decompose import decompose_polygon_with_stats
+    comb = Polygon([(0, 0), (40, 0), (40, 10)] + [(x, 10 + 6 * (k % 2)) for k, x in enumerate(range(38, 0, -2))]
+                   + [(0, 10)])
+    cfg = replace(engine_config(), max_seconds=0.0)
+    got = decompose_polygon_with_stats(comb, cfg)
+    assert got["search_terminated_by"] == "time_limit" and not got["fully_convex_best"]
+
+
 def test_an_engine_error_is_a_fate():
-    def broken(polygon):
+    def broken(polygon, max_seconds):
         raise RuntimeError("stuck")
 
     got = preview(box(0, 0, 20, 12), decompose=broken)

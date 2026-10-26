@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Hashable, List, Optional, Sequence, Tuple
@@ -224,8 +225,12 @@ def run_polygon_state_search(
     min_piece_area: Optional[float] = None,
     stop_on_first_success: bool = False,
     ranking: str = "reflex_first",
+    deadline: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Beam search over states (lists of pieces) until enough fully convex states are found.
+
+    ``deadline`` (a ``time.perf_counter()`` value) stops the search once it has passed, with the
+    variants found so far (``terminated_by = "time_limit"``).
 
     ``ranking`` orders the states the beam keeps. ``"reflex_first"`` ranks by
     the number of non-convex pieces, then their reflex vertices, then a penalty
@@ -489,6 +494,9 @@ def run_polygon_state_search(
         if n_failed >= max_failed:
             terminated_by = "max_failed_states"
             break
+        if deadline is not None and time.perf_counter() >= deadline:
+            terminated_by = "time_limit"
+            break
         if not active:
             if variants:
                 terminated_by = "queue_exhausted"
@@ -508,6 +516,9 @@ def run_polygon_state_search(
                 break
             if n_failed >= max_failed:
                 stage_reason = "max_failed_states"
+                break
+            if deadline is not None and time.perf_counter() >= deadline:
+                stage_reason = "time_limit"
                 break
 
             node = min(active.values(), key=_node_sort_key)

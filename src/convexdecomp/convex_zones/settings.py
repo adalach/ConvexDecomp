@@ -32,8 +32,8 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "only while it has found no convex variant. It stops after enough convex variants or dead ends."),
     ("fallback", "When a piece cannot be cut",
      "A piece the search cannot make convex is merged with a neighbouring piece and the union decomposed. When "
-     "merging gives up, the whole footprint is decomposed instead. A building where neither works has no "
-     "decomposition."),
+     "merging gives up, the whole footprint is decomposed instead, both within a time budget. A building where "
+     "neither works has no decomposition."),
 )
 
 
@@ -48,7 +48,8 @@ def setting(default: Any, *, section: str, title: str, help: str, unit: str | No
 @dataclass(frozen=True)
 class ZoneConfig:
     """Every threshold and switch of a building's convex zones; the defaults are the chosen settings (those of
-    ``OSM_2_Decomposition.ipynb``). Values outside a field's ``ge``/``le`` raise ``ValueError``."""
+    ``OSM_2_Decomposition.ipynb``, with a time budget for the fallback that the notebook leaves off). Values outside a
+    field's ``ge``/``le`` raise ``ValueError``."""
 
     # zone rules
     min_zone_width_m: float = setting(
@@ -158,6 +159,13 @@ class ZoneConfig:
         True, section="fallback", title="Whole footprint as the last resort",
         help="When a piece cannot be cut (and merging is off or gives up), the whole footprint is decomposed "
              "instead of the perimeter's zones; the building keeps its zones when that fails too.")
+    fallback_max_seconds: float = setting(
+        10.0, section="fallback", title="Time for the fallback", unit="s", ge=0.0, le=3600.0, lo=0.0, hi=60.0,
+        step=1.0,
+        help="The merges and the whole footprint of one building may search this long together: a search still "
+             "running when the time is up stops, and a building not decomposed by then has no decomposition. 0 sets "
+             "no limit. On the 990 test buildings the slowest fallback that succeeds takes 3 s on a busy machine; "
+             "a building near the limit could decompose on a faster machine and not on a slower one.")
 
     def __post_init__(self) -> None:
         for f in fields(self):

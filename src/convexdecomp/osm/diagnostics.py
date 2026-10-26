@@ -12,8 +12,8 @@ from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
 from convexdecomp.osm.axis_alignment import alignment_axis_records_for_polygon
-from convexdecomp.convex_zones.building import decompose_pieces
-from convexdecomp.osm.decompose import decompose_polygon_with_stats, extract_polygons
+from convexdecomp.convex_zones.building import decompose_pieces, engine_call
+from convexdecomp.osm.decompose import extract_polygons
 from convexdecomp.osm.subdivide import subdivide_perimeter_gdf
 from convexdecomp.plotting.geometry_grid import GHSL_gridplot
 
@@ -485,6 +485,7 @@ def run_building_decomposition(
     *,
     fallback: str = "none",
     fallback_max_share: float = 0.5,
+    fallback_max_seconds: float | None = None,
 ) -> tuple[gpd.GeoDataFrame, pd.DataFrame, gpd.GeoDataFrame]:
     """Decompose every building's input polygons; with ``fallback="merge"``, rescue the pieces that fail.
 
@@ -498,7 +499,8 @@ def run_building_decomposition(
     whose result was discarded (also counted in ``time_total_seconds``). A merged piece
     has the role ``merged_zone``, the id ``<sample_id>_merged_<n>`` and lists the zone ids
     it was made from in ``merged_from``; a footprint decomposed whole has the role
-    ``footprint``.
+    ``footprint``. ``fallback_max_seconds`` bounds the merges and the whole footprint of a
+    building together (None: no limit); ``fallback_out_of_time`` says where it ran out.
     """
     if fallback not in FALLBACKS:
         raise ValueError(f"fallback must be one of {FALLBACKS}, not {fallback!r}")
@@ -538,6 +540,7 @@ def run_building_decomposition(
                     "fallback_applied": None,
                     "n_fallback_merges": 0,
                     "fallback_seconds": 0.0,
+                    "fallback_out_of_time": False,
                     "final_polygon_roles": [],
                 }
             )
@@ -548,12 +551,13 @@ def run_building_decomposition(
         roles = [polygon_roles[k] if k < len(polygon_roles) else None for k in range(len(polygons))]
         building = decompose_pieces(
             list(zip(polygons, roles)),
-            lambda polygon: decompose_polygon_with_stats(polygon, cfg),
+            engine_call(cfg),
             footprint=row["geometry"],
             merge=fallback == "merge",
             max_share=fallback_max_share,
             min_shared_edge_m=MIN_SHARED_EDGE_M,
             whole=fallback == "merge",
+            max_seconds=fallback_max_seconds,
         )
         fallback_applied, n_fallback_merges = building.fallback, building.merges
         n_merged = n_whole = 0
@@ -682,6 +686,7 @@ def run_building_decomposition(
                 "fallback_applied": fallback_applied,
                 "n_fallback_merges": n_fallback_merges,
                 "fallback_seconds": fallback_seconds,
+                "fallback_out_of_time": building.out_of_time,
                 "final_polygon_roles": [item["role"] for item in items],
             }
         )

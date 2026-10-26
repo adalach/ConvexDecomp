@@ -1,9 +1,10 @@
-# Hand-off: a Zones page in the BEM4AI workbench
+# Hand-off: a Convex decomposition page in the BEM4AI workbench
 
 For the coordinator of the BEM4AI workbench (branch `workbench`). Agata asked for the convex decomposition to appear
 in the navigator as its own page **right after the Perimeter page**, laid out like the other step pages (Geometry
 cleaning, Neighbourhood, Windows, Perimeter). This file says what the package gives the page and proposes how it
-fits; the decisions marked as hers are hers. Read `README.md` in this folder first, and
+fits; the decisions marked as hers are hers (those she has made are marked with the date). The page was first
+called Zones; Agata named it "Convex decomposition" on 2026-10-26. Read `README.md` in this folder first, and
 `../corner_perimeter/NAVIGATOR.md` for how the Perimeter page was set up: this page follows the same pattern.
 
 ## What to load
@@ -39,18 +40,24 @@ footprint as the last resort. This package is that step for one building. A prop
 - **Decomposition (`S8`)**: each zone searched by the engine with `engine_config(ZoneConfig(**values))`. A piece
   stays the memo's unit: the first pass is one search per zone, like today's pieces.
 - **Fallback**: the merge and the whole footprint need the first pass of the whole building, so they are a
-  building-level step after it. `decompose_pieces(zones, decompose, footprint=..., merge=..., max_share=...,
-  min_shared_edge_m=..., whole=...)` takes the engine call as a function: the workbench passes one that looks a
-  piece up in its memo or searches it, so the first pass is never searched twice and every union is memoised like a
-  piece. `decompose_zones` is the same with ConvexDecomp's own engine call.
+  building-level step after it, within a time budget (`fallback_max_seconds`, 10 s by default).
+  `decompose_pieces(zones, decompose, footprint=..., merge=..., max_share=..., min_shared_edge_m=..., whole=...,
+  max_seconds=...)` takes the engine call as a function `decompose(polygon, max_seconds)`: `max_seconds` is None in
+  the first pass and the time left of the budget in the fallback, and `engine_call(cfg)` makes one from an engine
+  config (it sets the engine's own `max_seconds`, which stops a search with `search_terminated_by = "time_limit"`).
+  The workbench passes one that looks a piece up in its memo or searches it, so the first pass is never searched
+  twice. A union's search can be memoised like a piece unless the time limit stopped it (`search_terminated_by ==
+  "time_limit"`): that result depends on the time that was left. `decompose_zones` is the same with ConvexDecomp's
+  own engine call.
 - **Zone quality (`S9`)**: notebook 4's hard failure needs a zone narrower than 1.0 m (and elongated or far from
   square), and its awkward zones are those narrower than 1.2 m; the 1.2 m width rule leaves neither, so on the
-  corner-ray path `S9` would flag nothing and its whole-building retry would never run. Whether it stays there is
-  Agata's call.
-- **Where a run stops**: `until` gains the Zones step (`S9`, or wherever the coordinator puts it), and
+  corner-ray path `S9` would flag nothing and its whole-building retry would never run. Agata (2026-10-26): it is
+  not on the new path; its counts of zones under 2 m and under 5 m² become checks of the page.
+- **Where a run stops**: `until` gains the Convex decomposition step (`S9`, or wherever the coordinator puts it), and
   `CORNER_STOPS` no longer applies to a run that stops there. Whether a whole run (`all`) goes on from the corner-ray
   zones to the gates and Stage 5, and so whether corner rays become a whole run's default instead of notebook 4's
-  offset band, is Agata's call.
+  offset band, was Agata's call. She chose (2026-10-26) corner rays and these zones for whole runs; the offset band
+  stays only for notebook 4's equivalence suites.
 
 ## The page
 
@@ -75,13 +82,14 @@ a prefix (for example `zones_min_zone_width_m`), home `default` with the package
 | Key | What |
 | --- | --- |
 | `layers` | shapely geometries in the footprint's frame (convert to WKB): before `footprint`, `perimeter_zones`, `thin_zones`, `core`, `not_convex` (outlines; the Perimeter page's own layers); after, in drawing order, `perimeter_parts`, `core_parts`, `merged_parts`, `footprint_parts` (the convex zones by the piece they come from), `failed_pieces`, `zone_lines` (boundaries between pieces), `removed_lines` (zone boundaries a merge or the whole footprint removed), `cut_lines` (the engine's cuts) (`LAYERS`, `LAYER_TITLES`) |
-| `numbers` | `NUMBERS` in order, as `(key, label, unit)`: zones from the perimeter and those convex already, zones the engine could not cut, merges and the floor area merged, whole footprint, pieces left without a decomposition, convex zones, cuts, the narrowest and smallest zone, zones narrower than 2 m and under 5 m², mean compactness, pieces cut with the corner rule relaxed or searched deeper or wider, search time and the time of attempts not kept |
-| `fate` | `{"status": "kept", "fallback": None, "merge" or "whole"}`, or `{"status": "dropped", "reason": "decomposition_failed", "detail": {"pieces": ..., "kinds": [...]}}`, or the reason `decomposition_error` (the engine raised; `detail.error`) |
+| `numbers` | `NUMBERS` in order, as `(key, label, unit)`: zones from the perimeter and those convex already, zones the engine could not cut, merges and the floor area merged, whole footprint, pieces left without a decomposition, whether the fallback ran out of time, convex zones, cuts, the narrowest and smallest zone, zones narrower than 2 m and under 5 m², mean compactness, pieces cut with the corner rule relaxed or searched deeper or wider, search time and the time of attempts not kept |
+| `fate` | `{"status": "kept", "fallback": None, "merge" or "whole"}`, or `{"status": "dropped", "reason": "decomposition_failed", "detail": {"pieces": ..., "kinds": [...], "out_of_time": ...}}` (`out_of_time` when the fallback's budget ran out), or the reason `decomposition_error` (the engine raised; `detail.error`) |
 | `seconds`, `result` | the time, and the `BuildingZones` (`None` after an error) |
 
 Pass the zones of the building's `S6` value: without `zones` the preview runs the perimeter itself with
 `perimeter=CornerRayConfig(...)` (the package's defaults when not given), which would not hold the edits by hand.
-`decompose=` takes the same engine call as `decompose_pieces`, so a preview can use the memo too.
+`decompose=` takes the same engine call as `decompose_pieces`, so a preview can use the memo too, and the
+budget bounds a preview as it bounds a run.
 
 Colours, if the page wants the Perimeter page's look before and a clear one after (a proposal): the convex zones of
 perimeter zones `#9ecae1` (edge `#08306b`), of the core `#d9d9d9`, of merged pieces `#fdd0a2` (edge `#d94801`), of
@@ -98,7 +106,7 @@ workbench's). Per building, the preview's numbers for the run's table, `zone_rec
 convex zones (`zone`, `piece`, `kind`, `sources`: the perimeter zones it lies in, `area_m2`, `min_width_m`,
 `compactness`, geometry) and `piece_records(result)` for the pieces (`kind`, `sources`, `decomposed`, `parts`, the
 engine's `fallback_used`, `attempts`, `dead_ends`, `terminated_by`, `seconds`, geometry). The memo key of a building:
-its `S6` key, the Zones settings and the snapshot's commit; of a piece: its geometry, the engine settings and the
+its `S6` key, the page's settings and the snapshot's commit; of a piece: its geometry, the engine settings and the
 commit.
 
 **On ConvexDecomp's sample** (the 990 footprints of `data/bem4ai/subset_buildings_gdf.pkl`, local, the sample's
@@ -109,12 +117,15 @@ zones, a median of 7 per building and at most 54: **41 buildings have more than 
 `max_zones_per_building` would drop them) and 208 more than 12 (where `S9` would retry a failing building whole).
 No zone is narrower than 1.2 m; 319 are narrower than 2 m and 232 smaller than 5 m².
 
-**Time.** Perimeter and zones of one building together: a median of 0.03 s, 99 % within 2.5 s at a load average of
-about 7, the slowest building that decomposes 9.3 s. **A building that fails is slow**: osm_0719 took 462 s on a quiet
-machine, nearly all in 42 searches of merged pieces (up to 20 s each) before the whole footprint (26 s) also failed.
-With the workbench's 60 s per building it becomes a timeout instead of `decomposition_failed`: the same building is
-lost either way, but a preview needs the same time limit (the engine has no way to stop a search early, so it is
-the workbench's timeout signal and hard kill). A time budget for the fallback inside ConvexDecomp is Agata's call.
+**Time.** Perimeter and zones of one building together, at a load average of 7 to 14: a median of 0.03 s, 99 %
+within 2.3 s, the slowest building that decomposes 6.0 s. The fallback's budget (`fallback_max_seconds`, 10 s by
+default; Agata asked for it on 2026-10-26) changes no building that decomposes: the slowest fallback that succeeds
+takes 3.0 s on a busy machine, and with and without the budget the 990 buildings get the same zones. It bounds the
+buildings that fail: osm_0719 took 462 s without it and takes 11 s with it (`decomposition_failed` with
+`out_of_time`); osm_0517 fails in under 2 s without running out of time. The engine stops a search at its limit, so
+the building's time stays within the budget plus its first pass and perimeter; the workbench's own per-building
+timeout stays the safety net. A budget makes a building near it depend on the machine's speed; none of the 990 is
+near it.
 
 ## Checks for the task
 

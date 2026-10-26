@@ -203,6 +203,12 @@ class ConvexDecompositionConfig:
     track_time : bool
         If True, decompose_polygon_with_stats measures wall-clock time per
         polygon and adds a "time_seconds" field to the result dict.
+    max_seconds : Optional[float]
+        Wall-clock limit of one polygon's search, in seconds; None (the
+        default) sets none. When it runs out, the search stops with the convex
+        variants it has found (``search_terminated_by = "time_limit"``), and the
+        polygon has no decomposition if it has found none. A limit makes the
+        result depend on the machine's speed, so the default leaves it off.
     """
 
     search_depth: int = 24
@@ -227,6 +233,7 @@ class ConvexDecompositionConfig:
     bisector_always: bool = True
     min_corner_deg: float = 30.0
     min_zone_width_m: float = 1.2
+    max_seconds: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.max_reflex_per_node is None:
@@ -990,6 +997,7 @@ def _enumerate_states_for_polygon(
         state_score_fn=lambda pieces: _beam_score(pieces, cfg),
         min_piece_area=cfg.min_area_m2,
         ranking=cfg.beam_ranking,
+        deadline=None if cfg.max_seconds is None else time.perf_counter() + cfg.max_seconds,
     )
     dead_end_counts = search.get("dead_end_counts") or {}
     return {

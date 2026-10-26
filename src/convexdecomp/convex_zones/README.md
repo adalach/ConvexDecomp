@@ -55,14 +55,19 @@ python -m convexdecomp.convex_zones zones "POLYGON ((...))" min_zone_width_m=1.5
 3. **The whole footprint.** When merging gives up, the whole footprint is decomposed instead of the zones. When that
    fails too, the building keeps its zones as they were and has no decomposition.
 
+Steps 2 and 3 together have a time budget, 10 s by default: every search stops when the time is up, and a building
+not decomposed by then has no decomposition (`BuildingZones.out_of_time`). The first pass has no limit.
+
 A footprint the perimeter cannot zone is decomposed whole as one piece of kind `footprint`, with no fallback.
-`decompose_pieces(zones, decompose, ...)` is the same with the engine call given as a function (a polygon in, the
-engine's result dict out) and the fallback's settings as arguments: a caller that stores every piece's search, or
-stops a search after a time limit, passes its own.
+`decompose_pieces(zones, decompose, ...)` is the same with the engine call given as a function and the fallback's
+settings as arguments: `decompose(polygon, max_seconds)` returns the engine's result dict for the polygon, its search
+stopped after `max_seconds` (None in the first pass, the time left of the budget in the fallback).
+`engine_call(cfg)` makes one from an engine config; a caller that stores every piece's search passes its own.
 
 ## Settings
 
-`ZoneConfig` holds every setting; the defaults are those of `OSM_2_Decomposition.ipynb`. `engine_config(config)`
+`ZoneConfig` holds every setting; the defaults are those of `OSM_2_Decomposition.ipynb`, with a time budget for the
+fallback that the notebook leaves off. `engine_config(config)`
 gives the engine's `ConvexDecompositionConfig`; `engine_config(config, **PAPER_2026_SEARCH)` searches as in the
 EG-ICE 2026 paper. `settings_table()` gives the five sections below as plain data, each field with its kind
 (`switch`, `integer` or `number`), default, title, help, unit, the values a run accepts (`ge`, `le`), a slider range
@@ -115,8 +120,8 @@ wider, only while it has found no convex variant. It stops after enough convex v
 | `beam_area_weighting`<br>(advanced) | 1 | 0 to 1 | **Area weighting of the beam.** The area weighting of the score that ranks the open states while the search runs. 1 weights each piece by its area, so a state that has cut one neat block off a big remainder is not dropped. |
 
 **When a piece cannot be cut.** A piece the search cannot make convex is merged with a neighbouring piece and the
-union decomposed. When merging gives up, the whole footprint is decomposed instead. A building where neither works
-has no decomposition.
+union decomposed. When merging gives up, the whole footprint is decomposed instead, both within a time budget. A
+building where neither works has no decomposition.
 
 | Setting | Default | Page range | What it does |
 | --- | --- | --- | --- |
@@ -124,6 +129,7 @@ has no decomposition.
 | `merge_max_share`<br>(needs `merge_failed`) | 0.5 | 0.1 to 1 | **Largest merged piece.** Merging gives up when a merged piece would hold more than this share of the building's floor area. |
 | `min_shared_edge_m`<br>(needs `merge_failed`, advanced) | 0.05 m | 0 to 1 | **Neighbours share at least.** Two pieces are neighbours when they share at least this much edge. |
 | `whole_footprint` | on | switch | **Whole footprint as the last resort.** When a piece cannot be cut (and merging is off or gives up), the whole footprint is decomposed instead of the perimeter's zones; the building keeps its zones when that fails too. |
+| `fallback_max_seconds` | 10 s | 0 to 60 | **Time for the fallback.** The merges and the whole footprint of one building may search this long together: a search still running when the time is up stops, and a building not decomposed by then has no decomposition. 0 sets no limit. On the 990 test buildings the slowest fallback that succeeds takes 3 s on a busy machine; a building near the limit could decompose on a faster machine and not on a slower one. |
 
 ## Previews for a settings page
 
@@ -138,12 +144,14 @@ perimeter first, with `perimeter=CornerRayConfig(...)`):
   `LAYER_TITLES` names them.
 - `numbers`: `NUMBERS` in order, `(key, label, unit)`: the zones from the perimeter and how many were convex
   already, the zones the engine could not cut, merges and the floor area they cover, whether the whole footprint was
-  decomposed, the pieces left without a decomposition, the convex zones and cuts, the narrowest and smallest zone,
-  the zones narrower than 2 m and under 5 m², their mean compactness, the pieces cut with the corner rule relaxed or
-  searched deeper or wider, and the search time with the part spent on attempts not kept.
+  decomposed, the pieces left without a decomposition, whether the fallback's time ran out, the convex zones and
+  cuts, the narrowest and smallest zone, the zones narrower than 2 m and under 5 m², their mean compactness, the
+  pieces cut with the corner rule relaxed or searched deeper or wider, and the search time with the part spent on
+  attempts not kept.
 - `fate`: `{"status": "kept", "fallback": None | "merge" | "whole"}`, or `{"status": "dropped", "reason":
-  "decomposition_failed", "detail": {...}}` for a building with a piece left without a decomposition, or the reason
-  `decomposition_error` when the engine raised.
+  "decomposition_failed", "detail": {"pieces", "kinds", "out_of_time"}}` for a building with a piece left without a
+  decomposition (`out_of_time` when the fallback's budget ran out), or the reason `decomposition_error` when the
+  engine raised.
 - `seconds` and `result` (the `BuildingZones`, or `None` after an error).
 
 `zone_records(result)` gives the convex zones as rows (`zone`, `piece`, `kind`, `sources`, `area_m2`,
@@ -169,14 +177,18 @@ They have 9,048 convex zones: a median of 7 per building and at most 54 (208 bui
 than 24); none narrower than 1.2 m, 319 narrower than 2 m, 232 under 5 m² and 10 under 2 m² (convex zones of the
 perimeter that small, which no cut made).
 
-**Time.** The perimeter and the zones of one building together, on three processes at a load average of about 7:
-a median of 0.03 s, 90 % within 0.24 s and 99 % within 2.5 s; the slowest building that decomposes took 9.3 s
-(osm_0798, after one merge; 2.8 s on a quiet machine). A building that fails takes the longest: on a quiet machine
-osm_0719 took 462 s, of which 437 s went to 42 searches of merged pieces (each stops after 500 dead ends, the
-slowest after 20 s) and 26 s to the whole footprint; osm_0517 took 1.2 s.
+**Time.** The perimeter and the zones of one building together, on three processes at a load average of 7 to 14:
+a median of 0.03 s, 90 % within 0.2 s and 99 % within 2.3 s; the slowest building that decomposes took 6.0 s
+(osm_0798, after one merge; 2.8 s on a quiet machine). The slowest fallback that succeeds took 3.0 s at a load
+average of about 10 (osm_0798 again; the next 1.2 s), so the 10 s budget changes no building that decomposes: with
+and without it, the 990 buildings get the same zones. It bounds the buildings that fail: without it, osm_0719 took
+462 s on a quiet machine (437 s in 42 searches of merged pieces, 26 s for the whole footprint), with it 11 s, its fate
+`out_of_time`. osm_0517 fails in under 2 s without running out of time. The whole sample took 43 s on three
+processes instead of 573 s.
 
 `tests/test_convex_zones.py` checks the settings table, that the default engine settings are those of
 `OSM_2_Decomposition.ipynb`, a rectangle's zones and lines, the merge, the whole footprint, a footprint that cannot be
-cut, the order in which the pieces are searched, an engine that raises, and eight of the perimeter's test footprints
+cut, the order in which the pieces are searched, the time budget (the fallback stops and the engine's search stops
+at its limit), an engine that raises, and eight of the perimeter's test footprints
 (the zones tile them and none is narrower than 1.2 m); `tests/test_decomposition_fallback.py` the same fallback
 through `run_building_decomposition`.

@@ -62,6 +62,7 @@ NUMBERS = (
     ("merged_share_pct", "Floor area in merged pieces", "%"),
     ("whole", "Whole footprint decomposed instead", None),
     ("failed", "Pieces left without a decomposition", None),
+    ("out_of_time", "Fallback stopped by its time budget", None),
     ("zones", "Convex zones", None),
     ("cuts", "Cuts (each splits a piece in two)", None),
     ("min_width_m", "Narrowest zone", "m"),
@@ -146,6 +147,7 @@ def numbers(result: BuildingZones) -> dict[str, Any]:
         "merged_share_pct": round(100.0 * merged / floor, 1),
         "whole": int(result.fallback == "whole"),
         "failed": len(result.failed),
+        "out_of_time": int(result.out_of_time),
         "zones": len(zones),
         "cuts": sum(len(p.parts) - 1 for p in result.pieces if p.convex),
         "min_width_m": round(min(widths), 2) if widths else None,
@@ -163,8 +165,9 @@ def numbers(result: BuildingZones) -> dict[str, Any]:
 def preview(footprint: Polygon, zones: list[tuple[Polygon, str]] | None = None, config: ZoneConfig | None = None,
             *, perimeter: CornerRayConfig | None = None, decompose: Decompose | None = None) -> dict[str, Any]:
     """One building's preview: ``layers`` (:data:`LAYERS`, shapely geometries), ``numbers`` (:data:`NUMBERS`),
-    ``fate`` (kept, with the fallback that made it; or dropped with the reason ``decomposition_failed`` or
-    ``decomposition_error``), ``seconds`` and ``result`` (the :class:`~.building.BuildingZones`, None on an error).
+    ``fate`` (kept, with the fallback that made it; or dropped with the reason ``decomposition_failed``, whose detail
+    says whether the fallback's time ran out, or ``decomposition_error``), ``seconds`` and ``result`` (the
+    :class:`~.building.BuildingZones`, None on an error).
 
     ``zones`` are the perimeter's zones as ``(polygon, kind)`` pairs (``PerimeterResult.zones``, or the zones after
     edits by hand); without them the corner-ray perimeter of ``footprint`` is run first with ``perimeter``, and a
@@ -187,7 +190,8 @@ def preview(footprint: Polygon, zones: list[tuple[Polygon, str]] | None = None, 
         fate = {"status": "kept", "fallback": result.fallback}
     else:
         fate = {"status": "dropped", "reason": "decomposition_failed",
-                "detail": {"pieces": len(result.failed), "kinds": sorted({p.kind for p in result.failed})}}
+                "detail": {"pieces": len(result.failed), "kinds": sorted({p.kind for p in result.failed}),
+                           "out_of_time": result.out_of_time}}
     return {"layers": layers(result), "numbers": numbers(result), "result": result, "fate": fate,
             "seconds": round(time.perf_counter() - t0, 4)}
 
