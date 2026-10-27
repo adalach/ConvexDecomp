@@ -151,12 +151,34 @@ def test_rule1_ends_a_merged_ray_that_runs_along_the_band_line():
     # A bar with two steps: the end walls' rays merge 0.1 m from the band line and would run along it, leaving a
     # sliver arm on the zone of a step (a shape derived from a real footprint, on a 10 cm grid).
     bar = Polygon([(22.9, 0), (22.9, 8.8), (18.2, 8.8), (18.1, 11), (6.4, 11), (6.4, 8.8), (0, 8.8), (0.3, 0)])
-    off = corner_ray_perimeter(bar, CornerRayConfig(merged_ray_band_m=0.0)).counts()
+    off = corner_ray_perimeter(bar, CornerRayConfig(merged_ray_band_m=0.0, merged_ray_lines_m=0.0)).counts()
     assert off["narrow_arms"] == 1 and off["not_convex"] == 1 and off["merged_rays_to_band"] == 0
     result = corner_ray_perimeter(bar)
     on = result.counts()
     assert on["merged_rays_to_band"] == 1 and on["narrow_arms"] == 0 and on["not_convex"] == 0
     check_tiling(bar, result)
+
+
+def test_rule4_turns_bent_passages_and_narrow_stretches_of_rings_into_lines():
+    # Shapes derived from real footprints, on a 10 cm grid: a wing 9.1 m deep leaves a passage of core 0.1 m wide
+    # that bends; a courtyard near the outline leaves a narrow stretch of a ring of core.
+    bent = Polygon([(28.2, 55.1), (28.2, 18.8), (0, 18.8), (0, 0), (78.3, 0), (78.3, 9.1), (70.2, 9.1), (70.2, 13.4),
+                    (58.1, 13.4), (58.1, 9.1), (37.6, 9.1), (37.6, 55.1)])
+    ring = Polygon([(0, 0), (0, 26.5), (29.1, 26.5), (29.2, 0)], [[(10.1, 9.4), (19, 9.4), (19, 14.3), (10.1, 14.3)]])
+    for poly in (bent, ring):
+        result = corner_ray_perimeter(poly)
+        assert "passage" in [t["kind"] for t in result.narrow_parts] and not narrow_arms(result.zones)
+        check_tiling(poly, result)
+
+
+def test_rule1_merged_rays_give_way_to_a_line_they_run_along():
+    # The merged rays of two offset blocks pass each other 0.28 m apart (a shape derived from a real footprint).
+    blocks = Polygon([(0, 4.7), (0, 11.3), (2.8, 11.3), (2.8, 16.5), (16.4, 16.5), (16.4, 11.9), (36.9, 11.9),
+                      (36.9, 4.7), (33.9, 4.7), (33.9, 0), (14, 0), (14, 4.7)])
+    assert len(narrow_arms(corner_ray_perimeter(blocks, CornerRayConfig(merged_ray_lines_m=0.0)).zones)) == 1
+    result = corner_ray_perimeter(blocks)
+    assert result.counts()["merged_rays_along"] >= 1 and not narrow_arms(result.zones)
+    check_tiling(blocks, result)
 
 
 def test_narrow_arms():

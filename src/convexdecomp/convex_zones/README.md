@@ -70,8 +70,8 @@ A zone that is convex (the engine's own test) and at least as wide as the narrow
 back as it is, with no search: `is_final(zone, config)`. A convex zone thinner than that has no decomposition of its
 own and goes to the fallback; a convex zone under the smallest zone area is final (only cuts must not make zones that
 small). `already_convex(zones, config)` says that every zone of a building is final: `decompose_zones` then gives
-exactly its zones, each as one convex zone, with no fallback. On the 990-building working set 7,169 of the 8,028
-zones are final and 535 buildings are already convex; every final zone came back unsearched, and every other zone
+exactly its zones, each as one convex zone, with no fallback. On the 990-building working set 7,170 of the 8,026
+zones are final and 533 buildings are already convex; every final zone came back unsearched, and every other zone
 was searched or, 23 thin convex zones, refused.
 
 ## Variants and choices
@@ -81,7 +81,7 @@ The engine keeps every convex variant it finds for a piece, best first, in its r
 order the search found them, so the first is the engine's choice. `variant_records(piece.stats, config)` gives them
 as rows: `rank`, `fingerprint`, `score`, `terms` and `shares` (each term of the score and its share of it, as the
 search explorer's list of variants shows them; the terms add up to the score), `zones`, `narrowest_m`,
-`smallest_m2`, `fallback_used` and `parts`. On the working set 468 of 7,959 pieces have more than one variant, at
+`smallest_m2`, `fallback_used` and `parts`. On the working set 460 of 7,960 pieces have more than one variant, at
 most 10.
 
 `fingerprint(polygon or parts)` names a piece or a variant by its geometry (normalized, rounded to a micrometre), so
@@ -210,13 +210,13 @@ same zones as `run_building_decomposition(..., fallback="merge")`, which runs th
 | | Buildings |
 | --- | --- |
 | Fully convex | 988 |
-| Without a fallback | 931 |
-| After merging (69 merges) | 59 |
+| Without a fallback | 935 |
+| After merging (66 merges) | 55 |
 | After decomposing the whole footprint | 0 |
 | Without a decomposition | 2 (osm_0517, osm_0719) |
 
-They have 9,050 convex zones: a median of 7 per building and at most 54 (210 buildings have more than 12, 41 more
-than 24); none narrower than 1.2 m, 320 narrower than 2 m, 232 under 5 m² and 11 under 2 m² (convex zones of the
+They have 9,048 convex zones: a median of 7 per building and at most 54 (209 buildings have more than 12, 40 more
+than 24); none narrower than 1.2 m, 322 narrower than 2 m, 237 under 5 m² and 12 under 2 m² (convex zones of the
 perimeter that small, which no cut made).
 
 **Time.** The perimeter and the zones of one building together, on three processes at a load average of 7 to 14:

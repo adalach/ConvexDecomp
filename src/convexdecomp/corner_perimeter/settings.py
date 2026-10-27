@@ -30,8 +30,9 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "footprint keeps bad zones, each bay is tried with its rays."),
     ("rays", "Rays that meet",
      "Rule 1: rays that meet merge into one ray, which goes on in the middle; a merged ray that runs along the band "
-     "line ends on it. Rule 2: two rays running in opposite directions close to each other's corners become one line "
-     "from corner to corner. Rule 3: a ray from a convex corner that reaches nothing is discarded."),
+     "line, a facade or another line gives way to it. Rule 2: two rays running in opposite directions close to each "
+     "other's corners become one line from corner to corner. Rule 3: a ray from a convex corner that reaches nothing "
+     "is discarded."),
     ("narrow_core", "Narrow core",
      "Rule 4: legs, notches and narrow parts of the core become lines: the shorter of the two sides moves onto the "
      "longer one, or both move half way when their lengths are similar."),
@@ -185,6 +186,11 @@ class CornerRayConfig:
              "for at least four times as long, ends on the band line where it comes this close; its part along the "
              "band line is dropped and the lines that ended on that part end on the band line, so no sliver is left "
              "between the two. 0 turns this off.")
+    merged_ray_lines_m: float = setting(
+        0.5, section="rays", title="Merged ray along a facade or line within", unit="m", ge=0.0, le=2.0, lo=0.0,
+        hi=1.0, step=0.05,
+        help="Rule 1: the same for a merged ray that runs along a facade or another ray or line: that line takes its "
+             "place along the run. 0 turns this off.")
     keep_reflex_rays: bool = setting(
         True, section="rays", title="Keep the rays of reflex corners",
         help="Rule 3 discards a ray that reaches the far facade without meeting the band line or another ray. A ray "

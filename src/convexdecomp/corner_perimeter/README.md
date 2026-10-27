@@ -69,7 +69,7 @@ or wrapped around the call. `STEPS` holds the stages as data: stage, rule number
 | 6 | Rule 1: rays that meet merge | `lines.merge_meeting_rays` | `merge_rays` | |
 | 7 | Rule 3: reflex corners' rays are cast again | `lines.cast_reflex_rays_again` | `discard` | `keep_reflex_rays`, `recast_discarded` |
 | 8 | Rule 4: narrow core becomes lines | `core.narrow_core_to_lines` (`align_legs`, `fill_notches`, `narrow_tips`, `refit`, `run_on_spines`) | `narrow_core` | Narrow core |
-| 8a | Rule 1: a merged ray along the band line ends on it | `lines.end_merged_rays_on_band` | `merge_rays` | `merged_ray_band_m` |
+| 8a | Rule 1: a merged ray along the band line, a facade or another line gives way to it | `lines.end_merged_rays_along` | `merge_rays` | `merged_ray_band_m`, `merged_ray_lines_m` |
 | 9 | Zones | `zones.form_zones` (`node_lines`, `zones_from`) | | |
 | 10 | Rule 5: close points become one | `zones.merge_close_points` | `close_points` | Close points and narrow zones |
 | 11 | Rule 6: narrow zones give way to a diagonal | `zones.narrow_zones_to_diagonals` | `diagonals` | Close points and narrow zones |
@@ -179,19 +179,20 @@ come back.
 Where two rays meet, the ray that is hit is cut there, and one ray goes on from the meeting point between the two
 directions to the first line it meets.
 
-Once the band line is final (after rule 4), where a merged ray runs along the band line, within `merged_ray_band_m`
-of it and within 5° of its direction for at least four times that distance, the band line takes its place: the ray
-ends on the band line where the run starts (and, if it goes on past the run, starts again from it where the run
-ends), and the lines that ended on the run end on the band line. Otherwise the two would leave a sliver between them,
-an arm a few centimetres wide on the zone of the merged ray, which no later rule removes: two end walls a little
-shorter than twice the band depth make such a ray, a few centimetres short of the band line.
+Once the band line is final (after rule 4), where a merged ray runs along the band line (within `merged_ray_band_m`
+of it), a facade or another ray or line (within `merged_ray_lines_m`), within 5° of its direction for at least four
+times that distance, that line takes its place: the ray ends on it where the run starts (and, if it goes on past the
+run, starts again from it where the run ends), and the lines that ended on the run end on that line. Otherwise the two
+would leave a sliver between them, an arm a few centimetres wide on a zone, which no later rule removes: two end walls
+a little shorter than twice the band depth make a merged ray a few centimetres short of the band line; two wings whose
+facades are slightly offset make merged rays that pass each other a few centimetres apart.
 
 ![Rule 1](figures/perimeter_merged_rays.svg)
 
 *osm_0699's lower wing with two bays, (a) before and (b) after.*
 
-**Code:** `lines.merge_meeting_rays`, then `lines.end_merged_rays_on_band`. Stage `merge_rays`. Setting:
-`merged_ray_band_m`.
+**Code:** `lines.merge_meeting_rays`, then `lines.end_merged_rays_along`. Stage `merge_rays`. Settings:
+`merged_ray_band_m`, `merged_ray_lines_m`.
 
 ### Rule 3, second part: reflex corners' rays are cast again
 
@@ -206,9 +207,11 @@ stops on the first line it meets: a zone can only be convex if a line leaves eve
 Legs of the core narrower than `leg_width_m` (out along one side, across a short tip, back along a side parallel
 within `leg_angle_deg`), notches leaving the core thinner than `notch_passage_m` (`fill_notches`), and parts, tips
 and passages thinner than `narrow_core_m` (whole parts with `collapse_narrow_parts`) become lines of the band. The
-shorter side moves onto the longer one, or both half way when their lengths are within `similar_sides_ratio`. The
-lines that ended on a moved core corner follow it, and the line of a narrow part runs on to the next line. Core
-never vanishes: it becomes a line.
+shorter side moves onto the longer one, or both half way when their lengths are within `similar_sides_ratio` (unless
+the straight line half way would leave a passage that bends: then the longer side is the line). A narrow stretch of a
+ring of core around a courtyard becomes a line too, the rest of the ring staying core. The lines that ended on a moved
+core corner follow it, and the line of a narrow part runs on to the next line. Core never vanishes: it becomes a
+line.
 
 ![Rule 4, legs](figures/perimeter_narrow_core_legs.svg)
 
@@ -421,6 +424,7 @@ below. Values outside `ge`/`le` raise `ValueError`.
 | `opposite_gap_m` | 1 m | 0 to 3 m, step 0.05 | Rule 2: two rays running in opposite directions that each pass within this distance of the other's corner become one line from corner to corner. |
 | `opposite_angle_deg` | 20 deg | 0 to 45 deg, step 1 | Rule 2: how far from exactly opposite the two rays' directions may be. |
 | `merged_ray_band_m` | 0.5 m | 0 to 1 m, step 0.05 | Rule 1: a merged ray that runs along the band line this close and within 5 degrees of its direction, for at least four times as long, ends on the band line where it comes this close; its part along the band line is dropped and the lines that ended on that part end on the band line, so no sliver is left between the two. 0 turns this off. |
+| `merged_ray_lines_m` | 0.5 m | 0 to 1 m, step 0.05 | Rule 1: the same for a merged ray that runs along a facade or another ray or line: that line takes its place along the run. 0 turns this off. |
 | `keep_reflex_rays` | on | switch | Rule 3 discards a ray that reaches the far facade without meeting the band line or another ray. A ray from a reflex corner is kept and cast again after rule 1: a zone can only be convex if a line leaves every reflex corner. |
 | `recast_discarded` (advanced) | off | switch | Rule 3 off: every ray that reaches nothing is cast again after rule 1, from convex corners too. |
 
@@ -485,7 +489,8 @@ and what each step made, in the order the steps run:
 - the band, the rays and rules 1 to 3: `offset_core` and `offset_band_line` (the core and band line as offset),
   `lines` (the rays, merged rays and corner-to-corner lines, each a `Line` with its `kind` `ray`, `merged_ray` or
   `corner_line`, what it `stop`s on, whether it comes from a `reflex` corner and whether it was cast `again`),
-  `opposite_pairs` (rule 2), `rays_to_band` (the runs of merged rays along the band line that rule 1 dropped),
+  `opposite_pairs` (rule 2), `rays_to_band` and `rays_along` (the runs of merged rays along the band line, and
+  along a facade or another line, that rule 1 dropped),
   `discarded` (rule 3);
 - rule 4: `legs`, `notches`, `narrow_parts`, then `core` and `band_line` (the core after rule 4, and its outline
   with the lines the narrow core became);
@@ -522,12 +527,12 @@ footprints), with the default settings, and with rays from every corner (`wing_e
 
 | | Rays from every corner | Defaults |
 | --- | --- | --- |
-| Perimeter zones | 7,334 | 7,250 |
-| Zones thinner than 2 m (footprints with any) | 176 (94) | 93 (73) |
-| Zones not convex (footprints with any) | 365 (245) | 358 (239) |
+| Perimeter zones | 7,333 | 7,249 |
+| Zones thinner than 2 m (footprints with any) | 177 (95) | 93 (74) |
+| Zones not convex (footprints with any) | 370 (247) | 363 (241) |
 | Corners under 20° | 0 | 0 |
 | Specks under 0.5 m² | 0 | 0 |
-| Footprints with none of these | 701 | 722 |
+| Footprints with none of these | 699 | 720 |
 | Footprints without a core | 363 | 363 |
 | Zone arms narrower than 0.3 m (a check) | 3 | 2 |
 

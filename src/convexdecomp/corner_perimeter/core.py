@@ -101,7 +101,8 @@ def narrow_line(piece: Polygon, chords: list[tuple[np.ndarray, np.ndarray]], cfg
     """The line a narrow stretch of core becomes. Its two sides run between its two ends (a cut
     where it joins wider core, or a tip). The shorter side moves onto the longer one, so the line
     is the longer side; if the two are within ``similar_sides_ratio`` in length, the line runs half way
-    between them. Returns the line and the moves of the stretch's corners onto it."""
+    between them, unless that straight line would leave the stretch (a passage that bends), when it is the longer
+    side too. Returns the line and the moves of the stretch's corners onto it."""
     v = np.asarray(orient(piece, 1.0).exterior.coords)[:-1]
     n = len(v)
 
@@ -131,10 +132,10 @@ def narrow_line(piece: Polygon, chords: list[tuple[np.ndarray, np.ndarray]], cfg
     except StopIteration:
         return None
     lengths = [LineString(v[c]).length if len(c) > 1 else 0.0 for c in (c1, c2)]
-    if min(lengths) >= cfg.similar_sides_ratio * max(lengths):
+    longer = c1 if lengths[0] >= lengths[1] else c2
+    if min(lengths) >= cfg.similar_sides_ratio * max(lengths) and piece.buffer(0.05).covers(mid):
         line = mid
-    else:
-        longer = c1 if lengths[0] >= lengths[1] else c2
+    else:  # a passage that bends: its straight middle would leave it, so the longer side is the line
         line = LineString(v[longer])
     moves = [(p, np.asarray(line.interpolate(line.project(Point(p))).coords[0])) for p in v
              if line.distance(Point(p)) > 1e-9]
@@ -143,8 +144,9 @@ def narrow_line(piece: Polygon, chords: list[tuple[np.ndarray, np.ndarray]], cfg
 
 def narrow_tips(core, cfg: CornerRayConfig):
     """Rule 4, narrow parts of the core: a whole core part thinner than ``narrow_core_m``, or the
-    stretch where a part narrows below it (a tapered tip, or a passage between two wider parts),
-    cut off straight where the part reaches that width, becomes a line (see narrow_line). The
+    stretch where a part narrows below it (a tapered tip, a passage between two wider parts, or a narrow stretch
+    of a ring around a courtyard), cut off straight where the part reaches that width, becomes a line (see
+    narrow_line). The
     narrow stretches are found as what an opening of the part by half that width removes (pieces
     under 0.3 m² are rounding crumbs). Returns the new core, the lines, the vertex moves
     (old -> new) and the narrow parts."""
@@ -176,12 +178,11 @@ def narrow_tips(core, cfg: CornerRayConfig):
                 continue  # a junction of narrow stretches: left as it is
             chords = [(np.asarray(g.coords[0]), np.asarray(g.coords[-1])) for g in necks]
             host = max(range(len(bodies)), key=lambda i: shapely.intersection(bodies[i], q).area)
-            pieces = [bodies[host]]
-            for a, b in chords:
-                u = unit(b - a)
-                cut = LineString([a - 0.01 * u, b + 0.01 * u])
-                pieces = [x for pc in pieces for x in polygons(shapely.ops.split(pc, cut))]
-            if len(pieces) != len(chords) + 1:
+            cuts = [LineString([a - 0.01 * unit(b - a), b + 0.01 * unit(b - a)]) for a, b in chords]
+            # all cuts at once: across a ring around a courtyard, one cut alone divides nothing
+            pieces = polygons(shapely.ops.split(bodies[host], shapely.MultiLineString(cuts)))
+            ring = bool(bodies[host].interiors) and len(chords) == 2
+            if len(pieces) != (2 if ring else len(chords) + 1):
                 continue
             narrow = max(pieces, key=lambda pc: shapely.intersection(pc, q).area)
             rest = [pc for pc in pieces if pc is not narrow]

@@ -61,6 +61,7 @@ NUMBERS = (
     ("min_width_m", "Narrowest perimeter zone", "m"),
     ("merged_rays", "Rule 1: merged rays", None),
     ("merged_rays_to_band", "Rule 1: merged rays ended on the band line", None),
+    ("merged_rays_along", "Rule 1: merged rays ended on a facade or line they ran along", None),
     ("corner_lines", "Rule 2: corner-to-corner lines", None),
     ("rays_discarded", "Rule 3: rays discarded", None),
     ("legs", "Rule 4: legs to lines", None),
