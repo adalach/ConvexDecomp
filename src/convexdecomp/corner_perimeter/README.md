@@ -79,7 +79,7 @@ or wrapped around the call. `STEPS` holds the stages as data: stage, rule number
 | 15 | Rule 9: sharp corners are cut off | `zones.cut_sharp_corners` (the taker: `zones.taker_across`) | `sharp` | Thin zones, sharp corners and specks |
 | 16 | Rules 7 and 8 once more | as 13 and 14 | `sharp` | `repeat_thin_after_sharp` |
 | 17 | Rule 10: specks join a neighbour | `zones.join_specks` | `specks` | Thin zones, sharp corners and specks |
-| 18 | Tidy zone corners | `tidy.tidy_corners` (`snap_to_outline`, `merge_close_again`, `straighten_corners`, `drop_collinear`, each move through `try_move`) | `tidy` | Tidy zone corners |
+| 18 | Tidy zone corners | `tidy.tidy_corners` (`snap_to_outline`, `merge_close_again`, `straighten_corners`, `drop_collinear`, each move through `try_move`), then `zones.give_arms_across` | `tidy` | Tidy zone corners |
 | 15-18 | Repeat until nothing changes | `procedure._final_rounds` | | `repeat_until_stable` |
 | 19 | Wing-end and bay checks | `procedure._check_ray_sources` | | `wing_end_check`, `bay_check` |
 
@@ -336,7 +336,10 @@ straight within `collinear_deg` in every zone are dropped (`drop_collinear`). Ev
 sharing the point and is kept only if the zones stay valid and tile the footprint, no outline point moves, no convex
 zone becomes non-convex, no zone gets thinner than `min_zone_width_m` (a core part `narrow_core_m`) unless it
 already was, and no corner under `sharp_corner_deg` and no speck appears. With `split_pinched`, a zone that a move
-makes touch itself becomes two zones if both are convex.
+makes touch itself becomes two zones if both are convex. Last, with `give_arms`, an arm of a zone narrower than 0.3 m
+and at least 1 m long (the narrow arms the check counts, mostly thin wedges left where rule 5 or the tidy step moved
+corners) goes to the zone across its longest side, if both zones stay one valid polygon and the tiling exact; an arm
+that runs along the outline more than along any zone stays.
 
 ![Tidy](figures/perimeter_tidy.svg)
 
@@ -475,6 +478,7 @@ below. Values outside `ge`/`le` raise `ValueError`.
 | `straight_deg` | 2 deg | 0 to 5 deg, step 0.1 | A zone corner this close to 180 degrees counts as nearly straight. |
 | `drop_collinear` | on | switch | An inner point that is straight in every zone that has it is dropped: no zone has a corner there. |
 | `collinear_deg` (advanced) | 0.1 deg | 0 to 1 deg, step 0.01 | A point this close to straight counts as collinear. |
+| `give_arms` | on | switch | An arm of a zone narrower than 0.3 m and at least 1 m long (what opening the zone by 0.15 m takes away), left where rule 5 or the tidy step moved corners, goes to the zone across its longest side, if both stay one polygon. An arm along the outline stays. |
 
 ## What a result holds
 
@@ -497,11 +501,12 @@ and what each step made, in the order the steps run:
 - rules 5 to 10 and the tidy step: `points_merged`, `diagonals`, `corner_groups`, `thin_merged`, `lone_merged`
   (with whether a relink came first), `sharp_cuts`, `sharp_whole` (triangles rule 9 handed over whole),
   `specks_joined`, `tidied` (the tidy step's `snapped`, `merged_again`, `straightened` and `collinear_dropped`
-  points) and `rounds` (of the final rounds).
+  points), `arms_given` (the narrow arms given to the zone across) and `rounds` (of the final rounds).
 
 `band`, `perimeter_zones` and `core_parts` are derived from them; `counts()` gives the numbers, among them
-`narrow_arms`: a check, not a rule, of the zones' arms narrower than 0.3 m and at least 1 m long (`zones.narrow_arms`:
-what opening a zone by 0.15 m takes away, in parts of mean width under 0.3 m), which no rule removes.
+`narrow_arms`: a check of the zones' arms narrower than 0.3 m and at least 1 m long (`zones.narrow_arms`: what
+opening a zone by 0.15 m takes away, in parts of mean width under 0.3 m) that are left: those along the outline, and
+those `give_arms` could not give.
 
 ## Previews for a settings page
 

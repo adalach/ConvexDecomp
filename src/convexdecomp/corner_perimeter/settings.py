@@ -48,7 +48,7 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
      "inner corners become one, corners within a few degrees of straight are straightened and points straight in "
      "every zone are dropped. A move is kept only if the zones still tile the footprint, no convex zone becomes "
      "non-convex, no zone gets thinner than the zone width and no sharp corner or speck appears; the outline never "
-     "moves."),
+     "moves. Last, a narrow arm of a zone goes to the zone across it."),
 )
 
 
@@ -309,6 +309,11 @@ class CornerRayConfig:
     collinear_deg: float = setting(
         0.1, section="tidy", title="Collinear within", unit="deg", ge=0.0, le=5.0, lo=0.0, hi=1.0, step=0.01,
         needs="drop_collinear", advanced=True, help="A point this close to straight counts as collinear.")
+    give_arms: bool = setting(
+        True, section="tidy", title="Give narrow arms across",
+        help="An arm of a zone narrower than 0.3 m and at least 1 m long (what opening the zone by 0.15 m takes away), "
+             "left where rule 5 or the tidy step moved corners, goes to the zone across its longest side, if both stay "
+             "one polygon. An arm along the outline stays.")
 
     def __post_init__(self) -> None:
         for f in fields(self):

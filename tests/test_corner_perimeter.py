@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from convexdecomp.corner_perimeter import (LAYERS, NUMBERS, STAGES, CornerRayConfig, corner_ray_perimeter,
                                            narrow_arms, preview, settings_table, sharp_corners, zone_records)
 from convexdecomp.corner_perimeter.geometry import insert_point, is_convex, zone_across
-from convexdecomp.corner_perimeter.zones import cut_sharp_corners, join_specks
+from convexdecomp.corner_perimeter.zones import cut_sharp_corners, give_arms_across, join_specks
 
 DATA = Path(__file__).resolve().parent / "data" / "corner_perimeter_footprints.json"
 
@@ -151,7 +151,8 @@ def test_rule1_ends_a_merged_ray_that_runs_along_the_band_line():
     # A bar with two steps: the end walls' rays merge 0.1 m from the band line and would run along it, leaving a
     # sliver arm on the zone of a step (a shape derived from a real footprint, on a 10 cm grid).
     bar = Polygon([(22.9, 0), (22.9, 8.8), (18.2, 8.8), (18.1, 11), (6.4, 11), (6.4, 8.8), (0, 8.8), (0.3, 0)])
-    off = corner_ray_perimeter(bar, CornerRayConfig(merged_ray_band_m=0.0, merged_ray_lines_m=0.0)).counts()
+    off = corner_ray_perimeter(bar, CornerRayConfig(merged_ray_band_m=0.0, merged_ray_lines_m=0.0,
+                                                    give_arms=False)).counts()
     assert off["narrow_arms"] == 1 and off["not_convex"] == 1 and off["merged_rays_to_band"] == 0
     result = corner_ray_perimeter(bar)
     on = result.counts()
@@ -175,10 +176,26 @@ def test_rule1_merged_rays_give_way_to_a_line_they_run_along():
     # The merged rays of two offset blocks pass each other 0.28 m apart (a shape derived from a real footprint).
     blocks = Polygon([(0, 4.7), (0, 11.3), (2.8, 11.3), (2.8, 16.5), (16.4, 16.5), (16.4, 11.9), (36.9, 11.9),
                       (36.9, 4.7), (33.9, 4.7), (33.9, 0), (14, 0), (14, 4.7)])
-    assert len(narrow_arms(corner_ray_perimeter(blocks, CornerRayConfig(merged_ray_lines_m=0.0)).zones)) == 1
+    off = CornerRayConfig(merged_ray_lines_m=0.0, give_arms=False)
+    assert len(narrow_arms(corner_ray_perimeter(blocks, off).zones)) == 1
     result = corner_ray_perimeter(blocks)
     assert result.counts()["merged_rays_along"] >= 1 and not narrow_arms(result.zones)
     check_tiling(blocks, result)
+
+
+def test_a_narrow_arm_goes_to_the_zone_across():
+    # the upper right zone has an arm 4 m long and 0.2 m wide between the lower zone and the upper left zone
+    zones = [(Polygon([(0, 5), (10, 5), (10, 10), (4, 10), (4, 5.2), (0, 5.2)]), "zone"), (box(0, 0, 10, 5), "zone"),
+             (Polygon([(0, 5.2), (4, 5.2), (4, 10), (0, 10)]), "zone")]
+    out, given = give_arms_across(box(0, 0, 10, 10), zones, CornerRayConfig())
+    assert len(given) == 1 and not narrow_arms(out) and all(is_convex(z) for z, _ in out)
+    assert out[0][0].equals(box(4, 5, 10, 10))
+    union = union_all([z for z, _ in out])
+    assert union.symmetric_difference(box(0, 0, 10, 10)).area < 1e-9
+    assert math.isclose(sum(z.area for z, _ in out), 100.0, abs_tol=1e-9)
+    # an arm along the outline stays
+    edge = [(Polygon([(0, 0), (10, 0), (10, 5), (4, 5), (4, 0.2), (0, 0.2)]), "zone"), (box(0, 0.2, 4, 5), "zone")]
+    assert not give_arms_across(box(0, 0, 10, 5), edge, CornerRayConfig())[1]
 
 
 def test_narrow_arms():
@@ -257,7 +274,9 @@ def test_bays_on_real_footprints():
 
 def test_simple_shapes():
     assert counts(corner_ray_perimeter(RECT)) == (4, 1, 0, 0, 0, 0)
-    assert counts(corner_ray_perimeter(COURTYARD)) == (8, 1, 0, 0, 0, 0)
+    # the 1 m ring of core has two thin wedges, given to the zones across: they are then not convex
+    assert counts(corner_ray_perimeter(COURTYARD)) == (8, 1, 0, 2, 0, 0)
+    assert counts(corner_ray_perimeter(COURTYARD, CornerRayConfig(give_arms=False))) == (8, 1, 0, 0, 0, 0)
     for poly in (RECT, ROUND, COURTYARD):
         check_tiling(poly, corner_ray_perimeter(poly))
 

@@ -25,9 +25,9 @@ from .rays import cast, corners, offset_band, to_band
 from .settings import CornerRayConfig
 from .sources import RaySources, bay_caps, casting_corners, ray_sources
 from .tidy import tidy_corners
-from .zones import (PerimeterError, cut_sharp_corners, form_zones, join_specks, merge_close_points,
-                    merge_lone_thin_zones, merge_touching_thin_zones, narrow_arms, narrow_zones_to_diagonals,
-                    zone_counts)
+from .zones import (PerimeterError, cut_sharp_corners, form_zones, give_arms_across, join_specks,
+                    merge_close_points, merge_lone_thin_zones, merge_touching_thin_zones, narrow_arms,
+                    narrow_zones_to_diagonals, zone_counts)
 
 
 @dataclass(frozen=True)
@@ -118,6 +118,7 @@ class PerimeterResult:
     sharp_whole: list[Polygon] = field(default_factory=list)        # rule 9: triangles handed over whole
     specks_joined: list[Polygon] = field(default_factory=list)      # rule 10: the zones specks joined
     tidied: dict = field(default_factory=dict)  # tidy: snapped, merged_again, straightened, collinear_dropped
+    arms_given: list[Polygon] = field(default_factory=list)  # tidy: narrow arms given to the zone across
     rounds: int = 0                             # rounds of rules 9, 7, 8, 10 and the tidy step
 
     @property
@@ -158,6 +159,7 @@ class PerimeterResult:
                 "lone_merged": len(self.lone_merged), "lone_relinked": sum(r for _, r in self.lone_merged),
                 "sharp_cuts": len(self.sharp_cuts), "sharp_whole": len(self.sharp_whole),
                 "specks_joined": len(self.specks_joined), "narrow_arms": len(narrow_arms(self.zones)),
+                "arms_given": len(self.arms_given),
                 **{k: len(self.tidied.get(k, [])) for k in TIDIED}}
 
 
@@ -311,6 +313,9 @@ def _final_rounds(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRa
             zones, done = tidy_corners(poly, zones, cfg)
             for k, v in done.items():
                 r.tidied[k] += v
+            if cfg.give_arms:
+                zones, given = give_arms_across(poly, zones, cfg)
+                r.arms_given += given
         r.rounds += 1
         if sorted(z.wkb for z, _ in zones) == before:
             break

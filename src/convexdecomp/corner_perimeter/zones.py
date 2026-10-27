@@ -554,6 +554,58 @@ def narrow_arms(zones: list[tuple[Polygon, str]], width_m: float = ARM_WIDTH_M,
     return arms
 
 
+def give_arms_across(poly: Polygon, zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
+    """The tidy step's last move: every arm of a zone that :func:`narrow_arms` finds goes to the zone across its
+    longest side (within ``ACROSS_TOL``), if the zone keeping the rest and the zone taking the arm each stay one valid
+    polygon and every area stays exact; the arm's corners are inserted into the zones whose edges they lie on, so the
+    zones stay noded. A zone that is all arm goes whole. An arm that runs along the outline more than along any zone
+    stays. Returns the zones and the arms given."""
+    zones = list(zones)
+    given: list[Polygon] = []
+    tried: set[bytes] = set()
+    for _ in range(4 * len(zones)):  # an arm given can leave another; never more rounds than this
+        moved = False
+        for i, (z, k) in enumerate(zones):
+            for arm in narrow_arms([(z, k)]):
+                if arm.wkb in tried:
+                    continue
+                tried.add(arm.wkb)
+                outline = shared_length(arm.boundary, poly.boundary, ACROSS_TOL)
+                shares = [(shared_length(arm.boundary, n.boundary, ACROSS_TOL), j)
+                          for j, (n, _) in enumerate(zones) if j != i]
+                share, j = max(shares, default=(0.0, None))
+                if j is None or share <= outline:
+                    continue  # an arm along the outline stays
+                rest = z.difference(arm)
+                taker = one_polygon(shapely.union_all([zones[j][0], arm]))
+                if taker is None or not taker.is_valid:
+                    continue
+                whole = rest.area < 1e-6
+                rest = None if whole else one_polygon(rest)
+                if not whole and (rest is None or not rest.is_valid):
+                    continue
+                tol = 1e-9 * (z.area + zones[j][0].area)
+                if abs((0.0 if whole else rest.area) + taker.area - z.area - zones[j][0].area) > tol:
+                    continue  # the move would leave a gap or an overlap
+                new = list(zones)
+                new[j] = (taker, kind_of(taker, zones[j][1], cfg.min_zone_width_m))
+                if whole:
+                    del new[i]
+                else:
+                    new[i] = (rest, kind_of(rest, k, cfg.min_zone_width_m))
+                for p in np.asarray(arm.exterior.coords)[:-1]:  # the arm's corners node the zones they lie on
+                    new = [(insert_point(q, p), kq) for q, kq in new]
+                zones = new
+                given.append(arm)
+                moved = True
+                break
+            if moved:
+                break
+        if not moved:
+            break
+    return zones, given
+
+
 def sharp_corners(zones: list[tuple[Polygon, str]], deg: float = 20.0) -> int:
     """How many zone corners are sharper than deg."""
     return sum(sharp_corner_count(z, deg) for z, _ in zones)

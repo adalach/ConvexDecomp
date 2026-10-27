@@ -79,6 +79,7 @@ NUMBERS = (
     ("merged_again", "Tidy: groups of close points merged once more", None),
     ("straightened", "Tidy: near-straight corners straightened", None),
     ("collinear_dropped", "Tidy: collinear points dropped", None),
+    ("arms_given", "Tidy: narrow arms given to the zone across", None),
 )
 
 

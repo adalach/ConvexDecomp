@@ -113,7 +113,7 @@ commit.
 `osm_` ids; the working set the perimeter's hand-off counts on), with the defaults: 988 buildings fully
 convex, 935 of them without a fallback and 55 after 66 merges, the whole footprint never needed; osm_0517 and
 osm_0719 have no decomposition. `run_building_decomposition` (the OSM notebook's step) gives the same, zone for zone.
-9,048 convex zones, a median of 7 per building and at most 54: **40 buildings have more than 24 zones** (the workbench's
+9,050 convex zones, a median of 7 per building and at most 54: **40 buildings have more than 24 zones** (the workbench's
 `max_zones_per_building` would drop them) and 209 more than 12 (where `S9` would retry a failing building whole).
 No zone is narrower than 1.2 m; 322 are narrower than 2 m and 237 smaller than 5 m².
 
@@ -140,14 +140,14 @@ decomposition and goes to the fallback; a convex zone under `min_area_m2` (even 
 rule only stops cuts. `already_convex(zones, config)`: every zone final. For such a building `decompose_zones` gives
 exactly its zones (each one convex zone, in the package's order: core parts last), no search, no fallback, so the
 workbench can skip it ("already convex") without calling the package. On our 990: 533 buildings skipped, and every
-one of them equal to the package's result as a set of zones; 7,170 of 8,026 zones final.
+one of them equal to the package's result as a set of zones; 7,168 of 8,026 zones final.
 
 **Variants.** The engine's result for a piece now holds `ranked_variants` (`parts`, `score`, `fallback_used`), best
 first by the engine's own ranking: score, then a variant without fallback cuts, then the order found; the first is
 `best_variant`. `variant_records(piece.stats, config)` gives the rows the right panel needs: `rank`, `fingerprint`,
 `score`, `terms` and `shares` (zones, compactness and, when its weight is on, narrow; they add up to the score),
 `zones`, `narrowest_m`, `smallest_m2`, `fallback_used`, `parts`. Memoised engine results from an earlier pin have no
-`ranked_variants`. On our 990, 460 of 7,960 pieces have more than one variant, at most 10.
+`ranked_variants`. On our 990, 462 of 7,960 pieces have more than one variant, at most 10.
 
 **Choices.** `fingerprint(piece.polygon)` and `fingerprint(variant parts)` (16 hex digits from the normalized geometry
 rounded to 1e-6 m; `Piece.fingerprint`, and `fingerprint` in `piece_records` and `variant_records`). `preview`,

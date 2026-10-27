@@ -42,7 +42,7 @@ needs pandas and geopandas besides the package): the perimeter zones in `perimet
 (`perimeter_zone` or `thin_zone`) and the core parts in `interior_geom`; every zone and core part then goes to the
 decomposition as it is (a convex one comes back as one part, the others are cut); a footprint the procedure cannot
 zone is decomposed whole. On ConvexDecomp's current working set (see "Samples" below) with the engine at 1.2 m:
-the perimeter gives 7,338 zones (110 thinner than 2 m, 367 not convex) and 688 core parts. The decomposition
+the perimeter gives 7,338 zones (110 thinner than 2 m, 368 not convex) and 688 core parts. The decomposition
 alone leaves 69 buildings with a zone the search cannot cut; with OSM_2's fallback
 (`run_building_decomposition(..., fallback="merge")`: such a zone is merged with a neighbouring zone and the union
 decomposed, else the whole footprint) 988 of 990 buildings are fully convex, 55 of them after merging (66 merges), no
@@ -111,8 +111,8 @@ the decomposition notebook runs on; 161 footprints differ between the two.
   and keep every corner of its outline.
 - Totals with the defaults, for comparison at scale: on the tuning snapshot 7,249 perimeter zones, 93 thinner than
   2 m, 363 not convex, no corner under 20°, no speck under 0.5 m², 2 zone arms narrower than 0.3 m, 720 footprints
-  with none of these, 363 without a core; on the working set 7,338 perimeter zones, 110 thinner than 2 m, 367 not
-  convex, no corner under 20°, no speck, 2 narrow arms, 716 footprints with none of these, 365 without a core, 688
+  with none of these, 363 without a core; on the working set 7,338 perimeter zones, 110 thinner than 2 m, 368 not
+  convex, no corner under 20°, no speck, 1 narrow arm, 716 footprints with none of these, 365 without a core, 688
   core parts. Rule 1 ends 36 and 35 merged rays on the band line, and 151 and 150 on a facade or another line.
 - The page in both profiles and at 1024, 1280 and 1500 px, in both themes, like the other step pages.
 - ConvexDecomp's own tests at the commit (outside `src/`, so not in the snapshot): `tests/test_corner_perimeter.py`
