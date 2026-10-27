@@ -111,11 +111,11 @@ commit.
 
 **On ConvexDecomp's sample** (the 990 footprints of `data/bem4ai/subset_buildings_gdf.pkl`, local, the sample's
 `osm_` ids; the working set the perimeter's hand-off counts on), with the defaults: 988 buildings fully
-convex, 924 of them without a fallback and 66 after 76 merges, the whole footprint never needed; osm_0517 and
+convex, 931 of them without a fallback and 59 after 69 merges, the whole footprint never needed; osm_0517 and
 osm_0719 have no decomposition. `run_building_decomposition` (the OSM notebook's step) gives the same, zone for zone.
-9,049 convex zones, a median of 7 per building and at most 54: **41 buildings have more than 24 zones** (the workbench's
-`max_zones_per_building` would drop them) and 208 more than 12 (where `S9` would retry a failing building whole).
-No zone is narrower than 1.2 m; 319 are narrower than 2 m and 231 smaller than 5 m².
+9,050 convex zones, a median of 7 per building and at most 54: **41 buildings have more than 24 zones** (the workbench's
+`max_zones_per_building` would drop them) and 210 more than 12 (where `S9` would retry a failing building whole).
+No zone is narrower than 1.2 m; 320 are narrower than 2 m and 232 smaller than 5 m².
 
 **Time.** Perimeter and zones of one building together, at a load average of 7 to 14: a median of 0.03 s, 99 %
 within 2.7 s, the slowest building that decomposes 6.6 s. The fallback's budget (`fallback_max_seconds`, 10 s by
@@ -140,14 +140,14 @@ decomposition and goes to the fallback; a convex zone under `min_area_m2` (even 
 rule only stops cuts. `already_convex(zones, config)`: every zone final. For such a building `decompose_zones` gives
 exactly its zones (each one convex zone, in the package's order: core parts last), no search, no fallback, so the
 workbench can skip it ("already convex") without calling the package. On our 990: 535 buildings skipped, and every
-one of them equal to the package's result as a set of zones; 7,162 of 8,028 zones final.
+one of them equal to the package's result as a set of zones; 7,169 of 8,028 zones final.
 
 **Variants.** The engine's result for a piece now holds `ranked_variants` (`parts`, `score`, `fallback_used`), best
 first by the engine's own ranking: score, then a variant without fallback cuts, then the order found; the first is
 `best_variant`. `variant_records(piece.stats, config)` gives the rows the right panel needs: `rank`, `fingerprint`,
 `score`, `terms` and `shares` (zones, compactness and, when its weight is on, narrow; they add up to the score),
 `zones`, `narrowest_m`, `smallest_m2`, `fallback_used`, `parts`. Memoised engine results from an earlier pin have no
-`ranked_variants`. On our 990, 473 of 7,952 pieces have more than one variant, at most 10.
+`ranked_variants`. On our 990, 468 of 7,959 pieces have more than one variant, at most 10.
 
 **Choices.** `fingerprint(piece.polygon)` and `fingerprint(variant parts)` (16 hex digits from the normalized geometry
 rounded to 1e-6 m; `Piece.fingerprint`, and `fingerprint` in `piece_records` and `variant_records`). `preview`,

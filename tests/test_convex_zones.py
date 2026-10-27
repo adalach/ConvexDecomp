@@ -19,7 +19,7 @@ from shapely.geometry import Polygon, box
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from convexdecomp.convex_zones import (LAYERS, NUMBERS, ZoneConfig, already_convex, decompose_pieces,  # noqa: E402
-                                       decompose_zones, engine_call, engine_config, fingerprint, is_final,
+                                       decompose_zones, engine_call, engine_config, fingerprint, is_final, lines,
                                        piece_records, preview, search_tree, settings_table, variant_records,
                                        zone_records)
 from convexdecomp.core.search import AdaptiveSearchConfig  # noqa: E402
@@ -155,6 +155,17 @@ def test_the_engine_stops_at_its_time_limit():
     cfg = replace(engine_config(), max_seconds=0.0)
     got = decompose_polygon_with_stats(comb, cfg)
     assert got["search_terminated_by"] == "time_limit" and not got["fully_convex_best"]
+
+
+def test_cut_lines_that_two_parts_share_only_up_to_rounding():
+    # the left part's edge bends by 10 micrometres: the two parts' edges meet only at their ends, the cut is still drawn
+    left, right = Polygon([(0, 0), (5, 0), (5.00001, 5), (5, 10), (0, 10)]), box(5, 0, 10, 10)
+
+    def two_parts(polygon, max_seconds):
+        return {"fully_convex_best": True, "best_variant": [left, right], "time_seconds": 0.0}
+
+    result = decompose_pieces([(box(0, 0, 10, 10), "zone")], two_parts)
+    assert sum(g.length for g in lines(result)["cut_lines"]) >= 10.0
 
 
 def test_an_engine_error_is_a_fate():

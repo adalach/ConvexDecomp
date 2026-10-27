@@ -19,11 +19,12 @@ from convexdecomp.core.scores import minimum_width
 from .geometry import is_convex
 from .procedure import PerimeterResult, corner_ray_perimeter
 from .settings import CornerRayConfig
+from .zones import narrow_arms
 
 #: the layers drawn before and after the perimeter, in drawing order (later on top)
 LAYERS = {
     "before": ("footprint",),
-    "after": ("perimeter_zones", "thin_zones", "core", "not_convex", "band_line", "rays", "merged_rays",
+    "after": ("perimeter_zones", "thin_zones", "core", "not_convex", "narrow_arms", "band_line", "rays", "merged_rays",
               "corner_lines", "wing_ends", "bay_corners"),
 }
 #: what each layer is, in words
@@ -33,6 +34,7 @@ LAYER_TITLES = {
     "thin_zones": "Zones thinner than the zone width",
     "core": "Core",
     "not_convex": "Zones not convex (outline)",
+    "narrow_arms": "Zone arms narrower than 0.3 m",
     "band_line": "Band line (with the lines the narrow core became)",
     "rays": "Corner rays",
     "merged_rays": "Rule 1: merged rays",
@@ -55,8 +57,10 @@ NUMBERS = (
     ("not_convex", "Zones not convex", None),
     ("sharp_20", "Zone corners under 20 degrees", None),
     ("specks", "Zones under 0.5 m2", None),
+    ("narrow_arms", "Zone arms narrower than 0.3 m", None),
     ("min_width_m", "Narrowest perimeter zone", "m"),
     ("merged_rays", "Rule 1: merged rays", None),
+    ("merged_rays_to_band", "Rule 1: merged rays ended on the band line", None),
     ("corner_lines", "Rule 2: corner-to-corner lines", None),
     ("rays_discarded", "Rule 3: rays discarded", None),
     ("legs", "Rule 4: legs to lines", None),
@@ -86,6 +90,7 @@ def layers(result: PerimeterResult) -> dict[str, list[Any]]:
         "thin_zones": [z for z, k in zones if k == "thin"],
         "core": [z for z, k in zones if k == "core"],
         "not_convex": [z.exterior for z, k in zones if k != "core" and not is_convex(z)],
+        "narrow_arms": narrow_arms(zones),
         "band_line": [] if result.band_line.is_empty else [result.band_line],
         "rays": [ln.geom for ln in result.lines if ln.kind == "ray"],
         "merged_rays": [ln.geom for ln in result.lines if ln.kind == "merged_ray"],

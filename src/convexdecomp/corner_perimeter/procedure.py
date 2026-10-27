@@ -19,13 +19,15 @@ from shapely.geometry import LineString, MultiPoint, Polygon
 
 from .core import narrow_core_to_lines
 from .geometry import Line
-from .lines import cast_reflex_rays_again, join_opposite_rays, merge_meeting_rays, reattach, stop_rays
+from .lines import (cast_reflex_rays_again, end_merged_rays_on_band, join_opposite_rays, merge_meeting_rays, reattach,
+                    stop_rays)
 from .rays import cast, corners, offset_band, to_band
 from .settings import CornerRayConfig
 from .sources import RaySources, bay_caps, casting_corners, ray_sources
 from .tidy import tidy_corners
 from .zones import (PerimeterError, cut_sharp_corners, form_zones, join_specks, merge_close_points,
-                    merge_lone_thin_zones, merge_touching_thin_zones, narrow_zones_to_diagonals, zone_counts)
+                    merge_lone_thin_zones, merge_touching_thin_zones, narrow_arms, narrow_zones_to_diagonals,
+                    zone_counts)
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ class PerimeterResult:
     offset_band_line: Any = None                         # its boundary
     lines: list[Line] = field(default_factory=list)      # rays, merged rays and corner-to-corner lines
     opposite_pairs: list = field(default_factory=list)   # rule 2: (corner i, corner j, line, gap)
+    rays_to_band: list[LineString] = field(default_factory=list)  # rule 1: merged rays' parts along the band line
     discarded: list[int] = field(default_factory=list)   # rule 3: indices into corners
     # rule 4
     legs: list[dict] = field(default_factory=list)
@@ -144,6 +147,7 @@ class PerimeterResult:
                 "short_wall_chamfers": sum(w["kind"] == "chamfer" for w in sw), "short_wall_corners": dropped,
                 "short_wall_to_band": sum(w["to_band"] for w in sw), "short_wall_teeth": sum(w["tooth"] for w in sw),
                 "merged_rays": sum(ln.kind == "merged_ray" for ln in self.lines),
+                "merged_rays_to_band": len(self.rays_to_band),
                 "corner_lines": len(self.opposite_pairs),
                 "rays_discarded": len(self.discarded), "rays_cast_again": sum(ln.again for ln in self.lines),
                 "legs": len(legs), "notches": len(self.notches),
@@ -152,7 +156,7 @@ class PerimeterResult:
                 "corner_groups": len(self.corner_groups), "thin_merged": len(self.thin_merged),
                 "lone_merged": len(self.lone_merged), "lone_relinked": sum(r for _, r in self.lone_merged),
                 "sharp_cuts": len(self.sharp_cuts), "sharp_whole": len(self.sharp_whole),
-                "specks_joined": len(self.specks_joined),
+                "specks_joined": len(self.specks_joined), "narrow_arms": len(narrow_arms(self.zones)),
                 **{k: len(self.tidied.get(k, [])) for k in TIDIED}}
 
 
@@ -253,6 +257,9 @@ def _perimeter(poly: Polygon, cfg: CornerRayConfig, upto: str | None, skip: tupl
     # rule 4: narrow core becomes lines
     core, spines, r.legs, r.notches, r.narrow_parts = narrow_core_to_lines(r.offset_core, lines, poly, cfg,
                                                                            on("narrow_core"))
+    if on("merge_rays"):  # rule 1 once more: a merged ray along the band line ends on it
+        band = shapely.union_all([core.boundary, *spines]) if not core.is_empty or spines else LineString()
+        r.rays_to_band = end_merged_rays_on_band(lines, band, cfg.merged_ray_band_m)
 
     # the zones, and rules 5 to 8 on them
     zones, r.core, r.band_line, r.lines = form_zones(poly, core, spines, lines, cfg)

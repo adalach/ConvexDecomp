@@ -22,7 +22,7 @@ from shapely.geometry import LineString, Polygon, box
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from convexdecomp.corner_perimeter import (LAYERS, NUMBERS, STAGES, CornerRayConfig, corner_ray_perimeter,
-                                           preview, settings_table, sharp_corners, zone_records)
+                                           narrow_arms, preview, settings_table, sharp_corners, zone_records)
 from convexdecomp.corner_perimeter.geometry import insert_point, is_convex, zone_across
 from convexdecomp.corner_perimeter.zones import cut_sharp_corners, join_specks
 
@@ -145,6 +145,25 @@ def test_rule9_keeps_points_the_outline_runs_almost_straight_through():
     assert union.symmetric_difference(box(0, -5, 20, 10)).area < 1e-9
     assert math.isclose(sum(z.area for z, _ in out), union.area, abs_tol=1e-9)
     assert all(v in z.exterior.coords for z, _ in out[1:])
+
+
+def test_rule1_ends_a_merged_ray_that_runs_along_the_band_line():
+    # A bar with two steps: the end walls' rays merge 0.1 m from the band line and would run along it, leaving a
+    # sliver arm on the zone of a step (a shape derived from a real footprint, on a 10 cm grid).
+    bar = Polygon([(22.9, 0), (22.9, 8.8), (18.2, 8.8), (18.1, 11), (6.4, 11), (6.4, 8.8), (0, 8.8), (0.3, 0)])
+    off = corner_ray_perimeter(bar, CornerRayConfig(merged_ray_band_m=0.0)).counts()
+    assert off["narrow_arms"] == 1 and off["not_convex"] == 1 and off["merged_rays_to_band"] == 0
+    result = corner_ray_perimeter(bar)
+    on = result.counts()
+    assert on["merged_rays_to_band"] == 1 and on["narrow_arms"] == 0 and on["not_convex"] == 0
+    check_tiling(bar, result)
+
+
+def test_narrow_arms():
+    arm = Polygon([(0, 0), (7, 0), (7, 0.2), (4, 0.2), (4, 4), (0, 4)])  # a 3 m x 0.2 m arm
+    found = narrow_arms([(arm, "zone"), (box(0, 4, 4, 8), "zone")])
+    assert len(found) == 1 and math.isclose(found[0].area, 0.6, rel_tol=1e-6)
+    assert not narrow_arms([(Polygon([(0, 0), (7, 0), (7, 0.4), (4, 0.4), (4, 4), (0, 4)]), "zone")])
 
 
 def test_zone_across_within_rounding():

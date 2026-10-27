@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import shapely
-from shapely.geometry import LineString, MultiLineString, Polygon
+from shapely.geometry import LineString, Polygon
 
 from convexdecomp.core.scores import minimum_width
 from convexdecomp.corner_perimeter import CornerRayConfig, corner_ray_perimeter
@@ -76,8 +76,10 @@ NUMBERS = (
     ("seconds_search", "Search time", "s"),
     ("seconds_discarded", "Search time of attempts not kept", "s"),
 )
-#: shared boundary shorter than this is not drawn
+#: a line shorter than this is not drawn
 MIN_LINE_M = 1e-6
+#: a line this close to the outline is the outline's
+OUTLINE_TOL_M = 1e-6
 
 
 def compactness(zone: Polygon) -> float:
@@ -85,20 +87,19 @@ def compactness(zone: Polygon) -> float:
     return 4.0 * math.pi * zone.area / zone.length ** 2 if zone.length > 0.0 else 0.0
 
 
-def _shared_lines(polygons: list[Polygon]) -> list[LineString]:
-    """The boundary each pair of the polygons shares, as lines."""
+def _inner_lines(polygons: list[Polygon], outline: Polygon | None = None) -> list[LineString]:
+    """The lines between the polygons: their boundaries noded together, without the boundary of their outline (their
+    union when None). A line that ends on another polygon's edge, or that two polygons share only up to rounding, is
+    drawn as well."""
     if len(polygons) < 2:
         return []
-    boundaries = shapely.boundary(polygons)
-    left, right = shapely.STRtree(boundaries).query(boundaries, predicate="intersects")
-    keep = left < right
-    out = []
-    for shared in shapely.intersection(boundaries[left[keep]], boundaries[right[keep]]):
-        lines = [g for g in shapely.get_parts(shared) if isinstance(g, LineString) and g.length > MIN_LINE_M]
-        if lines:
-            merged = shapely.line_merge(MultiLineString(lines))
-            out.extend(g for g in shapely.get_parts(merged) if g.length > MIN_LINE_M)
-    return out
+    outline = shapely.union_all(polygons) if outline is None else outline
+    edges = shapely.union_all([p.boundary for p in polygons])
+    inner = shapely.difference(edges, shapely.buffer(outline.boundary, OUTLINE_TOL_M))
+    if inner.is_empty:
+        return []
+    merged = shapely.line_merge(inner) if inner.geom_type == "MultiLineString" else inner
+    return [g for g in shapely.get_parts(merged) if g.geom_type == "LineString" and g.length > MIN_LINE_M]
 
 
 def lines(result: BuildingZones) -> dict[str, list[LineString]]:
@@ -108,11 +109,11 @@ def lines(result: BuildingZones) -> dict[str, list[LineString]]:
     removed = []
     for piece in result.pieces:
         if len(piece.sources) > 1:
-            removed += _shared_lines([result.zones[k][0] for k in piece.sources])
+            removed += _inner_lines([result.zones[k][0] for k in piece.sources], piece.polygon)
     return {
-        "zone_lines": _shared_lines([p.polygon for p in result.pieces]),
+        "zone_lines": _inner_lines([p.polygon for p in result.pieces]),
         "removed_lines": removed,
-        "cut_lines": [line for p in result.pieces for line in _shared_lines(p.parts)],
+        "cut_lines": [line for p in result.pieces for line in _inner_lines(p.parts, p.polygon)],
     }
 
 

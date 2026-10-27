@@ -42,10 +42,10 @@ needs pandas and geopandas besides the package): the perimeter zones in `perimet
 (`perimeter_zone` or `thin_zone`) and the core parts in `interior_geom`; every zone and core part then goes to the
 decomposition as it is (a convex one comes back as one part, the others are cut); a footprint the procedure cannot
 zone is decomposed whole. On ConvexDecomp's current working set (see "Samples" below) with the engine at 1.2 m:
-the perimeter gives 7,339 zones (107 thinner than 2 m, 372 not convex) and 689 core parts. The decomposition
+the perimeter gives 7,339 zones (108 thinner than 2 m, 371 not convex) and 689 core parts. The decomposition
 alone leaves 69 buildings with a zone the search cannot cut; with OSM_2's fallback
 (`run_building_decomposition(..., fallback="merge")`: such a zone is merged with a neighbouring zone and the union
-decomposed, else the whole footprint) 988 of 990 buildings are fully convex, 67 of them after merging (76 merges), no
+decomposed, else the whole footprint) 988 of 990 buildings are fully convex, 59 of them after merging (69 merges), no
 area lost; osm_0719 and osm_0517 have no decomposition. Whether the workbench's
 Zones takes the same is Agata's decision.
 
@@ -109,10 +109,11 @@ the decomposition notebook runs on; 161 footprints differ between the two.
   `wing_end_parallel_deg = 180` (then 1 perimeter zone, not convex, and the core); a 30 m square with a 10 m
   square courtyard in its middle gives 8 perimeter zones and 1 core part. In every case the zones tile the footprint
   and keep every corner of its outline.
-- Totals with the defaults, for comparison at scale: on the tuning snapshot 7,250 perimeter zones, 92 thinner than
-  2 m, 361 not convex, no corner under 20°, no speck under 0.5 m², 722 footprints with none of these, 363 without a
-  core; on the working set 7,339 perimeter zones, 107 thinner than 2 m, 372 not convex, no corner under 20°, no
-  speck, 716 footprints with none of these, 364 without a core, 689 core parts.
+- Totals with the defaults, for comparison at scale: on the tuning snapshot 7,250 perimeter zones, 93 thinner than
+  2 m, 358 not convex, no corner under 20°, no speck under 0.5 m², 2 zone arms narrower than 0.3 m, 722 footprints
+  with none of these, 363 without a core; on the working set 7,339 perimeter zones, 108 thinner than 2 m, 371 not
+  convex, no corner under 20°, no speck, 3 narrow arms, 715 footprints with none of these, 364 without a core, 689
+  core parts. Rule 1 ends 36 merged rays on the band line in each.
 - The page in both profiles and at 1024, 1280 and 1500 px, in both themes, like the other step pages.
 - ConvexDecomp's own tests at the commit (outside `src/`, so not in the snapshot): `tests/test_corner_perimeter.py`
   (15 tests, nine real footprints with their expected counts, with the defaults and with the short walls, bays and

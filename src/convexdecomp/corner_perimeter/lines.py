@@ -4,7 +4,8 @@ corner (rule 2), and rays that reach nothing are discarded or cast again (rule 3
 They run in the order the lines need: rule 2 is decided on the rays as cast, before the rays are cut against each
 other (:func:`join_opposite_rays`); the rays are then cut where they reach another ray, and rule 3 discards the
 rays that reach the far facade (:func:`stop_rays`); rule 1 merges the rays that meet (:func:`merge_meeting_rays`);
-last, rule 3 casts the discarded rays of reflex corners again (:func:`cast_reflex_rays_again`).
+last, rule 3 casts the discarded rays of reflex corners again (:func:`cast_reflex_rays_again`). After rule 4, a merged
+ray that runs along the band line ends on it (:func:`end_merged_rays_on_band`).
 """
 
 from __future__ import annotations
@@ -14,9 +15,9 @@ import math
 import numpy as np
 import shapely
 from shapely.geometry import LineString, Point, Polygon
-from shapely.ops import substring
+from shapely.ops import nearest_points, substring
 
-from .geometry import EPS, Line, cut_at, first_hit, heading_of, reach, unit
+from .geometry import EPS, Line, cross, cut_at, first_hit, heading_of, reach, unit
 from .rays import trim
 from .settings import CornerRayConfig
 
@@ -144,6 +145,73 @@ def merge_meeting_rays(poly: Polygon, cs, lines: list[Line], keep: list[int], pa
         s_hit, kind = first_hit(x, u, obstacles, far)
         merged.append(Line(LineString([x, x + s_hit * u]), "merged_ray", kind))
     return merged
+
+
+#: a merged ray ends on the band line when it runs along it for at least this many times ``merged_ray_band_m``,
+#: within ``PARALLEL_DEG`` of its direction
+RUN_ALONG = 4.0
+PARALLEL_DEG = 5.0
+
+
+def _band_direction(band_line, q: Point) -> np.ndarray | None:
+    """The direction of the band line's segment through q (a point on it)."""
+    for part in shapely.get_parts(band_line):
+        c = np.asarray(part.coords)
+        for a, b in zip(c[:-1], c[1:]):
+            if np.linalg.norm(b - a) > EPS and LineString([a, b]).distance(q) < 1e-9:
+                return unit(b - a)
+    return None
+
+
+def end_merged_rays_on_band(lines: list[Line], band_line, tol: float) -> list[LineString]:
+    """Rule 1, once the band line is final (after rule 4): where a merged ray runs along the band line, within ``tol``
+    of it and within ``PARALLEL_DEG`` of its direction for at least ``RUN_ALONG`` times ``tol``, the band line takes
+    its place. The ray ends on the band line at its point nearest to where the run starts; if the ray goes on past
+    the run, its rest starts again from the band line at its point nearest to where the run ends; every line that
+    ended on the run ends on the band line instead, at its point nearest to the old end. Two lines that close would
+    otherwise leave a sliver between them. lines change in place. Returns the runs dropped."""
+    if tol <= 0.0 or band_line is None or band_line.is_empty:
+        return []
+    near_band = band_line.buffer(tol)
+
+    def on_band(q) -> np.ndarray:
+        return np.asarray(nearest_points(band_line, q)[0].coords[0])
+
+    dropped: list[LineString] = []
+    for ln in [ln for ln in lines if ln.kind == "merged_ray"]:
+        g = ln.geom
+        runs = []
+        for r in shapely.get_parts(shapely.intersection(g, near_band)):
+            if r.geom_type != "LineString" or r.length < RUN_ALONG * tol:
+                continue
+            along = _band_direction(band_line, nearest_points(band_line, r.interpolate(0.5, normalized=True))[0])
+            ray = unit(np.asarray(r.coords[-1]) - np.asarray(r.coords[0]))
+            if along is not None and math.degrees(math.asin(min(1.0, abs(cross(along, ray))))) <= PARALLEL_DEG:
+                s0, s1 = sorted((g.project(Point(r.coords[0])), g.project(Point(r.coords[-1]))))
+                runs.append((s0, s1))
+        if not runs:
+            continue
+        s0, s1 = min(runs)
+        run = substring(g, s0, s1)
+        for other in lines:
+            if other is not ln and Point(other.geom.coords[-1]).distance(run) < EPS:
+                other.geom = LineString([*other.geom.coords[:-1], on_band(Point(other.geom.coords[-1]))])
+                other.stop = "band"
+        rest = None
+        if s1 < g.length - EPS:
+            rest = Line(LineString([on_band(g.interpolate(s1)), *substring(g, s1, g.length).coords[1:]]), "merged_ray",
+                        ln.stop)
+        if s0 > EPS:
+            ln.geom = LineString([*substring(g, 0.0, s0).coords[:-1], on_band(g.interpolate(s0))])
+            ln.stop = "band"
+            if rest is not None:
+                lines.append(rest)
+        elif rest is not None:
+            ln.geom = rest.geom
+        else:
+            lines.remove(ln)
+        dropped.append(run)
+    return dropped
 
 
 def cast_reflex_rays_again(poly: Polygon, cs, rays: list[LineString], lines: list[Line], discarded: list[int],

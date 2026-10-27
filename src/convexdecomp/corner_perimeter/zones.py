@@ -482,8 +482,8 @@ def cut_sharp_corners(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
         taker = shapely.union_all([zones[j][0], tip])
         if not rest.is_valid or rest.area <= 0 or taker.geom_type != "Polygon" or not taker.is_valid:
             continue
-        area = zones[i][0].area
-        if abs(rest.area + tip.area - area) > 1e-9 * area or abs(taker.area - zones[j][0].area - tip.area) > 1e-9 * area:
+        tol = 1e-9 * zones[i][0].area
+        if abs(rest.area + tip.area - zones[i][0].area) > tol or abs(taker.area - zones[j][0].area - tip.area) > tol:
             continue  # the cut would leave a gap or an overlap
         if cfg.sharp_keep_convex and is_convex(zones[j][0]) and not is_convex(taker):
             continue  # the zone taking the tip would lose its convexity
@@ -526,6 +526,32 @@ def join_specks(zones: list[tuple[Polygon, str]], cfg: CornerRayConfig):
             break
         else:
             skipped.add(z.wkb)
+
+
+#: an arm of a zone this narrow and at least ``ARM_LENGTH_M`` long is counted by :func:`narrow_arms`
+ARM_WIDTH_M = 0.3
+ARM_LENGTH_M = 1.0
+#: and at least this large (smaller parts are what opening a zone leaves along its edges by rounding)
+ARM_MIN_AREA_M2 = 0.05
+
+
+def narrow_arms(zones: list[tuple[Polygon, str]], width_m: float = ARM_WIDTH_M,
+                length_m: float = ARM_LENGTH_M) -> list[Polygon]:
+    """The zones' arms narrower than width_m and at least length_m long: the parts that opening a zone by half the
+    width (shrinking it and growing it back, with mitred corners) takes away, whose mean width (twice the area over
+    the perimeter) is under width_m, whose half perimeter is at least length_m and whose area is at least
+    ``ARM_MIN_AREA_M2``. A check: no rule acts on them."""
+    arms: list[Polygon] = []
+    for z, _ in zones:
+        try:
+            opened = z.buffer(-width_m / 2, join_style="mitre", mitre_limit=10.0).buffer(
+                width_m / 2, join_style="mitre", mitre_limit=10.0)
+            rest = z.difference(opened)
+        except shapely.errors.GEOSException:
+            continue
+        arms += [q for q in polygons(rest) if q.area >= ARM_MIN_AREA_M2 and 2.0 * q.area / q.length < width_m
+                 and q.length / 2.0 >= length_m]
+    return arms
 
 
 def sharp_corners(zones: list[tuple[Polygon, str]], deg: float = 20.0) -> int:
